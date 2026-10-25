@@ -13,6 +13,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HomeLauncher"
+rootProject.name = "VantaLauncher"
 include(":app")
 include(":testpack")

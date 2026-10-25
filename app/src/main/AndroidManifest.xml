@@ -17,7 +17,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HomeLauncher">
+        android:theme="@style/Theme.Vanta">
 
         <activity
             android:name=".MainActivity"
@@ -29,7 +29,7 @@
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|density|fontScale|uiMode"
-            android:theme="@style/Theme.HomeLauncher">
+            android:theme="@style/Theme.Vanta">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

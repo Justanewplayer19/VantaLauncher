@@ -1,6 +1,10 @@
-# HomeLauncher
+# Vanta Launcher
 
 A minimal Android home launcher. Kotlin + Jetpack Compose.
+
+The package id is still `com.maria.homelauncher`, from before the name changed. Changing it
+would orphan every existing install and its settings, and it is not visible anywhere in the
+app, so it stays.
 
 ## What works
 

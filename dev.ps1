@@ -1,12 +1,12 @@
 <#
-    Helper for building and testing HomeLauncher on the emulator.
+    Helper for building and testing Vanta Launcher on the emulator.
 
     Usage:  .\dev.ps1 <command>
 
       boot      start the emulator and wait for it
       run       build, install, set as default home, press home
       install   build + install only
-      home      set HomeLauncher as the default home app
+      home      set Vanta as the default home app
       reset     hand the home app back to the stock launcher
       restart   force-stop and relaunch (fastest way to see a change)
       log       tail logcat, filtered to this app
