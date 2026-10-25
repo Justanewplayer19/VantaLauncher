@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- only the folder downloaded updates land in, so the provider cannot be talked
+         into handing out anything else the app stores -->
+    <cache-path name="updates" path="updates/" />
+</paths>

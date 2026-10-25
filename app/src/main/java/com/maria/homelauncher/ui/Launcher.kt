@@ -314,6 +314,13 @@ fun LauncherRoot(
             )
         }
 
+        // above the gesture bar, and only when nothing is covering the home screen
+        if (!drawerOpen && !settingsOpen && !intro && !welcome) {
+            Box(Modifier.fillMaxSize().systemBarsPadding(), contentAlignment = Alignment.BottomCenter) {
+                UpdateBanner(prefs, style) { settingsOpen = true }
+            }
+        }
+
         if (welcome) WelcomeFade(style) { welcome = false }
     }
     }

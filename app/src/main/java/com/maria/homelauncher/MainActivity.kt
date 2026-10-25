@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
         }
 
         Wallpaper.schedule(this)
+        Updater.schedule(this)
 
         setContent {
             LauncherTheme(style) {

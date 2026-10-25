@@ -60,6 +60,7 @@ private enum class Page(val title: String, val blurb: String) {
     Badges("Notification dots", "A dot on apps with something waiting"),
     Hidden("Hidden apps", "Only found by searching"),
     BackupPg("Backup", "Save your whole setup to a file"),
+    UpdatePg("Updates", "Check for a newer version"),
     About("Intro and reset", "Replay the tour, reset the look")
 }
 
@@ -324,6 +325,8 @@ fun SettingsScreen(
                     prefs.toggleHidden(it)
                     hidden = prefs.hidden
                 }
+
+                Page.UpdatePg -> UpdatePage(prefs)
 
                 Page.BackupPg -> BackupPage(
                     onExport = { backupSaver.launch(Backup.suggestedName()) },

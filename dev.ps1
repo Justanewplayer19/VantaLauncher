@@ -7,6 +7,7 @@
       run       build, install, set as default home, press home
       install   build + install only
       home      set Vanta as the default home app
+      release   build a signed APK and publish it as a GitHub release
       reset     hand the home app back to the stock launcher
       restart   force-stop and relaunch (fastest way to see a change)
       log       tail logcat, filtered to this app
@@ -16,7 +17,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('boot', 'run', 'install', 'home', 'reset', 'restart', 'log', 'devices', 'wipe')]
+    [ValidateSet('boot', 'run', 'install', 'home', 'reset', 'restart', 'log', 'devices', 'wipe', 'release')]
     [string]$Command = 'run'
 )
 
@@ -72,7 +73,7 @@ function Invoke-Build {
 }
 
 function Invoke-Install {
-    $apk = Join-Path $root 'app\build\outputs\apk\debug\app-debug.apk'
+        $apk = Join-Path $PSScriptRoot 'app/build/outputs/apk/release/app-release.apk'
     if (-not (Test-Path $apk)) { throw "APK not found at $apk" }
     & $adb install -r $apk
 }
@@ -141,5 +142,35 @@ switch ($Command) {
         Assert-Device
         & $adb shell pm clear $pkg
         Write-Host "Dock favourites cleared."
+    }
+    'release' {
+        # The updater finds a new version by reading the release tag and downloading the
+        # APK attached to it, so the tag has to be the version and the APK has to be
+        # there. Doing it here means neither depends on anyone remembering.
+        $gradleFile = Join-Path $PSScriptRoot 'app/build.gradle.kts'
+        $versionName = ([regex]::Match((Get-Content $gradleFile -Raw), 'versionName\s*=\s*"([^"]+)"')).Groups[1].Value
+        if (-not $versionName) { throw "Could not read versionName from app/build.gradle.kts" }
+
+        $gh = "C:\Program Files\GitHub CLI\gh.exe"
+        if (-not (Test-Path $gh)) { throw "GitHub CLI not found at $gh" }
+
+        $status = git -C $PSScriptRoot status --porcelain
+        if ($status) { throw "Commit or stash your changes first; a release should match a commit." }
+
+        Write-Host "Building release $versionName..."
+        & (Join-Path $PSScriptRoot 'gradlew.bat') assembleRelease --console=plain -q
+        if ($LASTEXITCODE -ne 0) { throw "Release build failed." }
+
+        $apk = Join-Path $PSScriptRoot 'app/build/outputs/apk/release/app-release.apk'
+        if (-not (Test-Path $apk)) { throw "No APK at $apk" }
+
+        $named = Join-Path $env:TEMP "vanta-$versionName.apk"
+        Copy-Item $apk $named -Force
+
+        $tag = "v$versionName"
+        Write-Host "Publishing $tag..."
+        & $gh release create $tag $named --title $tag --generate-notes
+        if ($LASTEXITCODE -ne 0) { throw "Could not create the release." }
+        Write-Host "Released $tag. Installed copies will offer it within a day."
     }
 }

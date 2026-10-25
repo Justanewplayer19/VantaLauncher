@@ -25,6 +25,29 @@ class Prefs(ctx: Context) {
         dock = cur
     }
 
+    /** Check GitHub for a newer build once a day, on wifi. */
+    var autoUpdate: Boolean
+        get() = sp.getBoolean("autoUpdate", true)
+        set(v) = sp.edit().putBoolean("autoUpdate", v).apply()
+
+    var lastUpdateCheck: Long
+        get() = sp.getLong("lastUpdateCheck", 0L)
+        set(v) = sp.edit().putLong("lastUpdateCheck", v).apply()
+
+    /** A version sitting downloaded in the cache, waiting to be installed. Blank if none. */
+    var readyVersion: String
+        get() = sp.getString("readyVersion", "")!!
+        set(v) = sp.edit().putString("readyVersion", v).apply()
+
+    var readyNotes: String
+        get() = sp.getString("readyNotes", "")!!
+        set(v) = sp.edit().putString("readyNotes", v).apply()
+
+    /** A version the user has waved away, so the home screen stops offering it. */
+    var dismissedVersion: String
+        get() = sp.getString("dismissedVersion", "")!!
+        set(v) = sp.edit().putString("dismissedVersion", v).apply()
+
     /** False until the intro has been finished or skipped. */
     var onboarded: Boolean
         get() = sp.getBoolean("onboarded", false)
