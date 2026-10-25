@@ -32,6 +32,8 @@ import com.maria.homelauncher.LocalStyle
 import com.maria.homelauncher.LauncherWidgets
 import com.maria.homelauncher.Prefs
 import com.maria.homelauncher.Fonts
+import com.maria.homelauncher.Backup
+import com.maria.homelauncher.StyleStore
 import com.maria.homelauncher.Style
 import com.maria.homelauncher.TARGET_BOTH
 import com.maria.homelauncher.TARGET_HOME
@@ -57,6 +59,7 @@ private enum class Page(val title: String, val blurb: String) {
     WallpaperPg("Wallpaper", "Rotate a folder, or set one"),
     Badges("Notification dots", "A dot on apps with something waiting"),
     Hidden("Hidden apps", "Only found by searching"),
+    BackupPg("Backup", "Save your whole setup to a file"),
     About("Intro and reset", "Replay the tour, reset the look")
 }
 
@@ -75,6 +78,8 @@ fun SettingsScreen(
     onStyle: (Style) -> Unit,
     onResetStyle: () -> Unit,
     onReplayIntro: () -> Unit,
+    styleStore: StyleStore,
+    onImported: () -> Unit,
     onClose: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -148,6 +153,38 @@ fun SettingsScreen(
         }
     }
 
+    val backupSaver = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        note = if (Backup.write(ctx, uri)) "setup saved to that file"
+        else "could not write to that file"
+    }
+
+    // a backup written by a file manager or sent through a chat app can come back with
+    // almost any mime type, so the filter is wide and the contents are checked instead
+    val backupOpener = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val result = Backup.read(ctx, uri)
+        // short on purpose: a toast gets two lines and silently cuts the rest, and the
+        // long version of this is already on the page itself
+        val message = when {
+            !result.ok -> result.message
+            result.widgetsDropped -> "Setup restored. Widgets need placing again."
+            else -> "Setup restored."
+        }
+        if (!result.ok) {
+            note = message
+            return@rememberLauncherForActivityResult
+        }
+        // a restore starts the activity again, which takes this screen and its note with
+        // it, so the one thing the user needs to read has to outlive the restart
+        android.widget.Toast.makeText(ctx, message, android.widget.Toast.LENGTH_LONG).show()
+        onImported()
+    }
+
     val singlePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -168,6 +205,7 @@ fun SettingsScreen(
             .fillMaxSize()
             .background(Color(style.bgColor))
             .systemBarsPadding()
+            .displayCutoutPadding()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -219,7 +257,26 @@ fun SettingsScreen(
                     )
                 }
 
-                Page.ThemesPg -> ThemesPage(style, onStyle)
+                Page.ThemesPg -> {
+                    // recomputed on every recomposition of this page, so applying a theme
+                    // makes the undo row appear and using it makes the row go away
+                    var undoable by remember { mutableStateOf(styleStore.undoLabel()) }
+                    ThemesPage(
+                        style = style,
+                        undoLabel = undoable,
+                        onApply = { preset ->
+                            styleStore.snapshot(preset.name)
+                            onStyle(preset.applyTo(style))
+                            undoable = preset.name
+                            note = null
+                        },
+                        onUndo = {
+                            styleStore.undo()?.let(onStyle)
+                            undoable = null
+                            note = "put back"
+                        }
+                    )
+                }
 
                 Page.WidgetsPg -> WidgetsPage(widgets)
 
@@ -267,6 +324,11 @@ fun SettingsScreen(
                     prefs.toggleHidden(it)
                     hidden = prefs.hidden
                 }
+
+                Page.BackupPg -> BackupPage(
+                    onExport = { backupSaver.launch(Backup.suggestedName()) },
+                    onImport = { backupOpener.launch(arrayOf("application/json", "text/*", "*/*")) }
+                )
 
                 Page.About -> {
                     Text(

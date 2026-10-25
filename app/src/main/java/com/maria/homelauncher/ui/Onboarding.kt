@@ -56,6 +56,7 @@ fun Onboarding(
             .fillMaxSize()
             .background(Color(style.bgColor))
             .systemBarsPadding()
+            .displayCutoutPadding()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),

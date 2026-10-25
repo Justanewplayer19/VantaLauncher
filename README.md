@@ -513,15 +513,93 @@ Android Studio is **not** needed. It is installed, but only useful as a code edi
   ignored. Start swipes from mid-screen.
 - **Cold boot is slow, snapshots are fast.** Leave the AVD running between builds.
 
+### Backup
+
+Everything the launcher knows lives in five preference stores, `launcher`, `style`,
+`overrides`, `layout` and `widgets`, plus two folders of files: the fonts you added and the
+icons you replaced. `Backup.kt` writes all of it to one JSON file through the system file
+picker, and reads it back.
+
+Values carry their type (`{"t":"l","v":4290759167}`), because SharedPreferences is typed and
+asking for a key as the wrong type throws. Putting an `Int` back where a `Long` was would
+break the next read, not the write, which is the kind of bug that surfaces a week later.
+Font and icon files travel as base64 in the same file, so a backup is the whole setup rather
+than a list of settings pointing at things that are gone.
+
+Two things do not survive a move to another phone, and the import says so instead of failing
+quietly:
+
+- **Widgets** are host ids issued by the phone they were placed on. The import skips that
+  store when the device string does not match, which leaves whatever that phone already had
+  rather than wiping it.
+- **Icon packs** are other apps. The choice comes back; it needs that pack installed.
+
+A font id like `f:/data/user/0/.../fonts/Satoshi.ttf` names a path, and the path is not the
+same on the new phone. The file travels with the backup, so the id is repointed at wherever
+it landed. Anything else is left alone.
+
+A restore rewrites every store underneath a running screen, half of which is already held in
+composable state, so it finishes by starting the activity again. That takes the settings
+screen and its status line with it, which is why the result is a toast: it is the one message
+that has to outlive the restart. Toasts get two lines and silently cut the rest, so the text
+is short and the long explanation stays on the page.
+
+### Undo for themes
+
+A preset overwrites a dozen colour fields at once, and nobody remembers what they were. This
+was not hypothetical: it happened, and the colours were recovered by sampling pixels out of
+old screenshots.
+
+`StyleStore.snapshot` copies the whole `style` store into a second one before a preset is
+applied, by iterating the entries rather than naming fields, so a setting added later is
+covered without anyone remembering to add it here. One snapshot, not a history: the colours
+before the last theme are worth keeping, every look anyone ever tried is not. Using the undo
+clears it, so it cannot be pressed twice and land somewhere nobody asked for.
+
 ## Building a shareable APK
 
 ```
-gradlew assembleDebug
+gradlew assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
+gradlew assembleRelease    # app/build/outputs/apk/release/app-release.apk
 ```
 
-Output lands at `app/build/outputs/apk/debug/app-debug.apk`. That installs on any phone with
-"install unknown apps" allowed. Debug-signed, so it is fine for you and friends but not for
-the Play Store.
+The release build is signed with a key in `keystore.jks`, whose passwords are in
+`keystore.properties`. Both are gitignored, and both matter: **a new key cannot install over
+an app signed with the old one**, so losing them means uninstalling before upgrading, which
+takes the whole setup with it. Keep a copy somewhere other than this folder. Export a backup
+too, and the loss is survivable either way.
+
+Signed with v2 and v3, not v1, which is only needed below API 24 and this app starts at 26.
+A clone without the key still builds a release: it comes out unsigned rather than failing.
+
+`isMinifyEnabled` is off on purpose. Icon pack support looks resources up by name through
+`getIdentifier`, which a shrinker cannot see and would strip.
+
+Debug and release are signed with different keys, so a phone cannot have both. Installing one
+over the other means uninstalling first, and that erases everything.
+
+## Running it on another phone
+
+minSdk is 26, targetSdk 35, and lint reports no `NewApi` findings, so nothing calls an API
+that an Android 8 phone would not have.
+
+What needs doing by hand on a new device:
+
+- Set it as the home app. Android asks the first time home is pressed.
+- Notification dots need the notification listener permission, and gestures need the
+  accessibility service. Both are per-device and cannot be granted by a backup.
+- Widgets have to be placed again. See above.
+
+Samsung and other skins ship their own fonts in `/system/fonts`, so the "On this phone" tab
+lists a different set there. That is the tab working, not failing.
+
+Two locale bugs were fixed while checking this, and both only appear on a phone set to a
+language with its own digits. `String.format` with the default locale would render the hex
+colour field in digits its own parser then rejects, leaving the field uneditable. Both
+formatting sites are pinned to one locale now.
+
+Panels pad for `displayCutoutPadding` as well as the system bars, which matters on a
+punch-hole screen in landscape, where the cutout sits outside the status bar.
 
 ## Layout
 
@@ -536,6 +614,7 @@ app/src/main/java/com/maria/homelauncher/
   Widgets.kt            widget host, saved list, the two-step add flow
   IconPack.kt           third-party icon themes: discovery, appfilter, masking
   Overrides.kt          per-app name and icon replacements
+  Backup.kt             the whole setup to one file, and back
   Gestures.kt           accessibility service and the gesture actions
   Fonts.kt              the six font providers, behind one id
   FontWeb.kt            Google, Fontsource and Fontshare over plain HTTP
@@ -553,6 +632,7 @@ app/src/main/java/com/maria/homelauncher/
   ui/WelcomeFade.kt     the fade from the last intro page into home
   ui/FontPage.kt        the font picker: provider dots, search, keep
   ui/ThemesPage.kt      the preset list, each row in its own colours
+  ui/BackupPage.kt      save and load, and what does not travel
   ui/WidgetViews.kt     widget stack, settings page, provider picker
   ui/GesturesPage.kt    one row per gesture, with its chooser
   ui/BadgesPage.kt      notification dots and their permission

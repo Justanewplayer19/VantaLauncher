@@ -302,8 +302,13 @@ private fun NumberCell(value: Int, onCommit: (Int) -> Unit) {
     }
 }
 
+/**
+ * Pinned to one locale on purpose. A phone set to a language with its own digits formats
+ * %X in those digits, and [parseHex] would then reject the very text this produced, leaving
+ * the field uneditable.
+ */
 private fun hexOf(argb: Long): String =
-    "#%08X".format(argb and 0xFFFFFFFFL)
+    "#%08X".format(java.util.Locale.US, argb and 0xFFFFFFFFL)
 
 /** Accepts RGB, RRGGBB or AARRGGBB, with or without a leading #. */
 private fun parseHex(raw: String): Long? {

@@ -228,6 +228,7 @@ fun SearchOverlay(
             .fillMaxSize()
             .background(panelColor(style))
             .systemBarsPadding()
+            .displayCutoutPadding()
             .imePadding()
     ) {
         if (style.searchPos == SearchPos.Top) bar()

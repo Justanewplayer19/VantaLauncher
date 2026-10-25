@@ -369,7 +369,7 @@ internal fun SliderRow(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text, color = LocalInk.current.copy(alpha = 0.85f), fontSize = 14.sp)
             Text(
-                if (decimals) String.format("%.2f", value) else value.toInt().toString(),
+                if (decimals) String.format(java.util.Locale.US, "%.2f", value) else value.toInt().toString(),
                 color = LocalInk.current.copy(alpha = 0.55f),
                 fontSize = 13.sp
             )

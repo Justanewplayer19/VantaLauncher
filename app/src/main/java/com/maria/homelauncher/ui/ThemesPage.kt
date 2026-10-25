@@ -25,17 +25,28 @@ import com.maria.homelauncher.Style
  * separates one of these from another at a glance.
  */
 @Composable
-fun ThemesPage(style: Style, onStyle: (Style) -> Unit) {
+fun ThemesPage(
+    style: Style,
+    undoLabel: String?,
+    onApply: (Preset) -> Unit,
+    onUndo: () -> Unit
+) {
     Hint(
         "A theme sets colours, icon shape, how much glass there is, and a font. It leaves " +
             "your columns, dock, gestures, widgets and hidden apps alone, so nothing has " +
             "to be set up again afterwards."
     )
 
+    // a theme overwrites a dozen colours at once, and nobody remembers what they were
+    undoLabel?.let { name ->
+        Spacer(Modifier.height(12.dp))
+        UndoRow(name, onUndo)
+    }
+
     Spacer(Modifier.height(12.dp))
     PRESETS.forEach { p ->
         PresetRow(p, current = style.bgColor == p.bg && style.accent == p.accent) {
-            onStyle(p.applyTo(style))
+            onApply(p)
         }
     }
 
@@ -44,6 +55,33 @@ fun ThemesPage(style: Style, onStyle: (Style) -> Unit) {
             "pages. The light themes assume a light wallpaper, since app names on the home " +
             "screen sit on your own picture rather than on the theme."
     )
+}
+
+/**
+ * Offered until another theme is applied. One step back, not a history: the colours before
+ * the last theme are worth keeping, every look anyone ever tried is not.
+ */
+@Composable
+private fun UndoRow(name: String, onUndo: () -> Unit) {
+    val ink = LocalInk.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(ink.copy(alpha = 0.09f))
+            .clickable(onClick = onUndo)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Undo $name", color = ink, fontSize = 15.sp)
+            Text(
+                "Put the colours back to how they were before it",
+                color = ink.copy(alpha = 0.5f),
+                fontSize = 12.sp
+            )
+        }
+    }
 }
 
 @Composable

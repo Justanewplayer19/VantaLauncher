@@ -115,6 +115,7 @@ val LocalBadges = androidx.compose.runtime.compositionLocalOf { emptySet<String>
 
 class StyleStore(ctx: Context) {
     private val sp = ctx.getSharedPreferences("style", Context.MODE_PRIVATE)
+    private val undo = ctx.getSharedPreferences("style_undo", Context.MODE_PRIVATE)
 
     fun load() = Style(
         columns = sp.getInt("columns", 4),
@@ -200,8 +201,60 @@ class StyleStore(ctx: Context) {
 
     fun reset() = sp.edit().clear().apply()
 
+    /**
+     * Keeps a copy of the whole look so it can be put back.
+     *
+     * A theme overwrites a dozen colour fields at once, and getting those back by hand
+     * means knowing what they were. This copies every entry rather than a named list of
+     * fields, so a setting added later is covered without anyone remembering to add it
+     * here. Only one snapshot is kept: this is an undo, not a history.
+     */
+    fun snapshot(label: String) {
+        val e = undo.edit().clear().putString(LABEL, label)
+        sp.all.forEach { (k, v) ->
+            when (v) {
+                is Boolean -> e.putBoolean(k, v)
+                is Int -> e.putInt(k, v)
+                is Long -> e.putLong(k, v)
+                is Float -> e.putFloat(k, v)
+                is String -> e.putString(k, v)
+            }
+        }
+        e.apply()
+    }
+
+    /** What the snapshot was taken before, for the button to name it. Null if there is none. */
+    fun undoLabel(): String? = undo.getString(LABEL, null)
+
+    /**
+     * Puts the snapshot back and clears it, so undo cannot be pressed twice and land
+     * somewhere nobody asked for.
+     */
+    fun undo(): Style? {
+        if (undo.getString(LABEL, null) == null) return null
+        val e = sp.edit().clear()
+        undo.all.forEach { (k, v) ->
+            if (k == LABEL) return@forEach
+            when (v) {
+                is Boolean -> e.putBoolean(k, v)
+                is Int -> e.putInt(k, v)
+                is Long -> e.putLong(k, v)
+                is Float -> e.putFloat(k, v)
+                is String -> e.putString(k, v)
+            }
+        }
+        e.apply()
+        undo.edit().clear().apply()
+        return load()
+    }
+
     private inline fun <reified T : Enum<T>> enumOr(key: String, fallback: T): T {
         val raw = sp.getString(key, null) ?: return fallback
         return runCatching { enumValueOf<T>(raw) }.getOrDefault(fallback)
+    }
+
+    private companion object {
+        /** Doubles as the "is there a snapshot" flag, so it is never a real setting. */
+        const val LABEL = "__undo_label"
     }
 }

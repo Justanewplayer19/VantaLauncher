@@ -71,6 +71,7 @@ import com.maria.homelauncher.LocalStyle
 import com.maria.homelauncher.NotificationWatch
 import com.maria.homelauncher.LauncherWidgets
 import com.maria.homelauncher.Prefs
+import com.maria.homelauncher.StyleStore
 import com.maria.homelauncher.Style
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -91,7 +92,9 @@ fun LauncherRoot(
     drawerOpen: Boolean,
     setDrawerOpen: (Boolean) -> Unit,
     resetPanels: Int,
-    widgets: LauncherWidgets
+    widgets: LauncherWidgets,
+    styleStore: StyleStore,
+    onImported: () -> Unit
 ) {
     val apps by repo.apps.collectAsState()
     val badges by NotificationWatch.badged.collectAsState()
@@ -305,6 +308,8 @@ fun LauncherRoot(
                 // straight back to page one, not "next time you open the launcher": the
                 // launcher is the home screen, so it is rarely started from cold again
                 onReplayIntro = { prefs.onboarded = false; intro = true; settingsOpen = false },
+                styleStore = styleStore,
+                onImported = onImported,
                 onClose = { settingsOpen = false; hidden = prefs.hidden }
             )
         }
@@ -482,6 +487,7 @@ private fun HomeScreen(
                 onDoubleTap = { onGesture("double") }
             )
             .systemBarsPadding()
+            .displayCutoutPadding()
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -623,6 +629,7 @@ private fun AppDrawer(
             .fillMaxSize()
             .background(panelColor(style))
             .systemBarsPadding()
+            .displayCutoutPadding()
             .imePadding()
             .swipe(Direction.Down, onClose)
             .nestedScroll(pullToClose)
@@ -842,6 +849,7 @@ private fun SingleSurface(
                 onDoubleTap = { onGesture("double") }
             )
             .systemBarsPadding()
+            .displayCutoutPadding()
     ) {
         CompactClock()
         WidgetStack(

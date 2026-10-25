@@ -71,7 +71,12 @@ class MainActivity : ComponentActivity() {
                     drawerOpen = drawerOpen,
                     setDrawerOpen = { drawerOpen = it },
                     resetPanels = resetPanels,
-                    widgets = widgets
+                    widgets = widgets,
+                    styleStore = styleStore,
+                    // a restore rewrites every store underneath the running screen, and
+                    // half of that is already held in composable state. Starting the
+                    // activity again is the one way to be sure nothing stale survives.
+                    onImported = { recreate() }
                 )
             }
         }
