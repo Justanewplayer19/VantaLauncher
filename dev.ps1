@@ -66,16 +66,35 @@ function Invoke-Build {
         if (-not (Test-Path $gradlew)) {
             throw "gradlew.bat is missing. Regenerate it with: gradle wrapper --gradle-version 8.9"
         }
-        & $gradlew assembleDebug
+        # Release, always. The debug variant exists because Gradle always has one, but
+        # nothing here uses it: a phone can only hold one of the two, since they are
+        # signed with different keys, and the one worth testing is the one people get.
+        & $gradlew assembleRelease
         if ($LASTEXITCODE -ne 0) { throw "Build failed." }
     }
     finally { Pop-Location }
 }
 
 function Invoke-Install {
-        $apk = Join-Path $PSScriptRoot 'app/build/outputs/apk/release/app-release.apk'
+    $apk = Join-Path $root 'app/build/outputs/apk/release/app-release.apk'
     if (-not (Test-Path $apk)) { throw "APK not found at $apk" }
-    & $adb install -r $apk
+
+    $out = & $adb install -r $apk 2>&1
+    $text = $out -join "`n"
+    Write-Host $text
+
+    # Android refuses an install signed with a different key, and says so in a way that
+    # does not hint at the cause. Anything already on the device from before this went
+    # release-only is debug signed, so this is the first thing anyone will hit.
+    if ($text -match 'INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match') {
+        throw @"
+The copy on the device was signed with a different key, so this cannot replace it.
+Save a backup first (Settings > Backup > Save setup to a file, then pull it off the
+device), then: adb uninstall $pkg
+Uninstalling erases the launcher's settings, which is what the backup is for.
+"@
+    }
+    if ($text -notmatch 'Success') { throw "Install failed." }
 }
 
 # The stock launcher differs by system image, so try the usual suspects in order.
