@@ -18,10 +18,15 @@ app, so it stays.
 - **Wallpaper rotation** -- pick individual images *or a whole folder* from anywhere on
   the device, rotate on a timer, home / lock / both, optional shuffle, "Change now"
 - **Single wallpaper** -- set one image immediately without turning rotation on
-- **Single-surface mode** (toggle in settings) -- every app lives on the home pages, no
-  drawer. Long-press to drag, drop one icon centrally on another to make a folder, folders
-  open as an overlay with an editable name, long-press inside to move an app back out,
-  swipe up for a search-only panel. Pages auto-paginate with dots.
+- **Free placement** -- the home screen is a grid of cells and anything can go in any one
+  of them, gaps included. Long-press an icon to pick it up and drop it where you want.
+  Nothing reflows to close a gap. With a drawer the home screen starts empty and fills
+  with what you put there ("Add to home screen" in an app's long-press menu); on one
+  surface every installed app is laid out for you.
+- **App folders** -- drop one icon squarely on another to make one. Folders open as an
+  overlay with an editable name, and a long-press inside moves an app back out.
+- **Edit mode** -- hold bare wallpaper. The cell lattice appears, widgets grow a drag
+  sheet, a resize corner and a remove badge, and a bar offers "Add widget" and "Done".
 - **Drawer browse style** -- Scroll (one long vertical list) or Pages (swipe left/right,
   with page dots). Set in settings.
 - **Search bar position** -- Top or Bottom, centred either way. At the bottom it lifts above
@@ -45,9 +50,10 @@ app, so it stays.
 - **Gestures** -- swipe down, double tap, swipe left and swipe right on the home screen,
   each set to notifications, quick settings, lock, recents, search, an app, or nothing.
 - **Notification dots** -- an accent dot on apps with something waiting.
-- **Widgets** -- add any widget the device offers from Settings, set its height, reorder
-  the stack, remove it. They sit on the home screen in both modes: between the clock and
-  the dock with a drawer, above the app pages on one surface.
+- **Widgets** -- live on the same grid as the icons, in both home modes. The catalogue is
+  grouped by the app each widget came from and collapsed until opened; hold a row and drag
+  it straight onto the spot you want, or tap it to let it find its own. Drag a placed
+  widget to move it and pull its bottom corner to resize it in whole cells.
 - **Theming** -- every piece of UI reads from one `Style` model, persisted and live-applied:
   - Layout: 3-6 columns, icon size, labels on/off, label size
   - Icon shape: circle / squircle / rounded / square / original
@@ -59,8 +65,8 @@ app, so it stays.
   - Icon colour: original, or one-colour themed icons with a full picker (hue,
     saturation, brightness and alpha bars, live swatch, hex and RGBA entry)
   - A **live preview** at the top of settings with Home / Drawer tabs, showing the real
-    icons and your first wallpaper image. In Pages mode the preview is genuinely
-    swipeable, with its own page dots.
+    icons and your first wallpaper image, in the shape of the phone it is running on. In
+    Pages mode the preview is genuinely swipeable, with its own page dots.
   - Colour: accent and background through the same full picker, panel style
     (blur / dim / solid), opacity and blur strength
   - Text: system font family, clock / date / search sizes
@@ -69,25 +75,33 @@ app, so it stays.
 - Home press while already home closes the drawer
 - Auto-refreshes when apps are installed or removed
 
-### Single-surface notes
+### The home grid
 
-The layout is **one ordered list** (`Layout.kt`), not a page/slot grid. Pages are derived by
-chunking it to whatever fits, so changing columns or icon size just reflows and there is no
-page bookkeeping to keep in sync. Folders are items in that same list.
+`Layout.kt` holds a list of `Placed`: an item plus the page, column, row and cell span it
+occupies. Apps, folders and widgets are all `Item`s in that one list, which is what lets a
+single drag implementation move any of them.
 
-- `syncLayout()` reconciles the saved list against what is installed: drops uninstalled
-  apps, appends new ones at the end, prunes empty folders, and collapses a one-app folder
-  back into a plain app. Order and folder membership survive.
-- **Drag does not live-reorder.** The dragged tile floats under the finger and the target
-  slot is highlighted; the move commits on release. Live reorder made "drop onto" ambiguous
-  because items shift while dragging.
+- A `page` of -1 means **unplaced**. The grid gives those the first free spot that fits and
+  writes the coordinates back, so a newly installed app, an app added from the drawer and a
+  layout saved before free placement existed all land somewhere sensible without the store
+  needing to know how wide the grid is.
+- `syncLayout()` reconciles against what is installed: drops uninstalled apps, prunes empty
+  folders, collapses a one-app folder back into a plain app, and passes widgets straight
+  through. `addNew` is on only for one-surface mode; with a drawer the home screen holds
+  what was put there and nothing else.
+- **Nothing reflows.** A gap is a gap. Dropping on a taken cell is refused and the outline
+  turns red rather than shoving the occupant aside.
+- **Drag does not live-move.** The dragged tile floats under the finger and the target
+  cells are outlined; the move commits on release, which is what keeps "drop onto" from
+  being ambiguous.
 - Folder vs move is decided by position: the pointer must land inside `FOLDER_HIT` (0.38) of
   the target cell's half-extent to mean "make a folder". Outer region means "move here".
 - Dwelling within 6% of a page edge for 550ms flips the page mid-drag.
 - A long-press that releases without moving more than 14dp opens the item menu instead of
   being treated as a drag.
-- Hidden apps are excluded from the layout entirely and reachable only through swipe-up
-  search.
+- Hidden apps are excluded from the layout entirely and reachable only through search.
+- Widgets are dragged from edit mode only. Outside it their own views own every touch,
+  which is the entire point of a widget.
 
 ### Colour picker
 
@@ -125,6 +139,9 @@ a captured snapshot.
   `Alignment.Top` to line up with a full page.
 - Recents are centred with a fixed tile width plus `Arrangement.Center`; `weight(1f)` would
   stretch them across the full width instead of grouping them.
+- The preview is sized to the device's own aspect ratio rather than filling the settings
+  column. A full-width box 330dp tall read as a small tablet: spacing looked roomier than it
+  is, and a page of icons did not fall where it really falls.
 - The preview reuses the already-rendered `AppEntry` icons, so it cannot drift from the real
   surface -- whatever it shows is literally the same bitmaps. Wallpaper is decoded from the
   first chosen rotation image with `inSampleSize` so a full-size photo is never loaded whole.
@@ -143,14 +160,18 @@ Hosting widgets is `AppWidgetHost` plus `AppWidgetManager`, both wrapped in
   to start directly. Cancelling at either step frees the allocated id again.
 - **`startListening()` lives in `onStart`.** Without it a placed widget renders as an
   empty box after a cold start. Verified by force-stopping with a clock widget placed.
-- **Size is announced, not imposed.** The frame gets the height you set; the provider is
-  told about it through `updateAppWidgetOptions`, fired from a keyed `LaunchedEffect`
-  because that call broadcasts to the widget and firing it per recomposition would be rude.
-  `prune()` drops ids the system has forgotten, so an uninstalled widget cannot leave a
-  dead frame behind.
-
-Placement is a vertical stack, not free positioning on the grid. The stack reuses the
-same space the layout already had, so neither home mode needed its own arrangement.
+- **Size is announced, not imposed.** The frame gets the cells you dragged it to; the
+  provider is told about it through `updateAppWidgetOptions`, fired from a keyed
+  `LaunchedEffect` because that call broadcasts to the widget and firing it per
+  recomposition would be rude. Ids the system has forgotten are dropped on sight, so an
+  uninstalled widget cannot leave a dead frame behind.
+- **The catalogue stays composed while a widget is dragged out of it.** The gesture belongs
+  to the row it started on, so taking that row out of the composition would cancel the drag
+  halfway across the screen. It is made invisible instead.
+- Where a widget sits is part of the home layout, not a list of its own. `LauncherWidgets`
+  hands out ids and reports a bound, configured one through `onPlaced`; the layout decides
+  where it lands. The spot a drag chose is held until that callback arrives, because the
+  consent dialog and the widget's own setup screen both happen in between.
 
 ### Icon opacity
 
@@ -648,11 +669,11 @@ punch-hole screen in landscape, where the cutout sits outside the status bar.
 app/src/main/java/com/maria/homelauncher/
   MainActivity.kt       activity, HOME wiring, onNewIntent, window blur, style state
   AppRepo.kt            installed apps, icon rendering (shape mask + mono tint), intents
-  Layout.kt             single-surface item list, folders, JSON store, install sync
+  Layout.kt             placed items, folders, JSON store, install sync, packing
   Prefs.kt              dock, hidden apps, wallpapers, flags
   Style.kt              the whole look as one data class, plus LocalStyle
   Wallpaper.kt          rotation worker, folder enumeration, apply
-  Widgets.kt            widget host, saved list, the two-step add flow
+  Widgets.kt            widget host, the two-step add flow, cell spans
   IconPack.kt           third-party icon themes: discovery, appfilter, masking
   Overrides.kt          per-app name and icon replacements
   Backup.kt             the whole setup to one file, and back
@@ -664,7 +685,7 @@ app/src/main/java/com/maria/homelauncher/
   NotificationWatch.kt  notification listener, package names only
   WallpaperColour.kt    accent sampled out of the wallpaper
   ui/Launcher.kt        root, home screen, drawer, paged grid, item sheet
-  ui/HomeGrid.kt        single-surface pages, drag, drop guide, folder tiles
+  ui/HomeGrid.kt        the free-placement grid: drag, drop guide, folders, widget tray
   ui/Overlays.kt        folder overlay, search-only panel
   ui/Settings.kt        page router, root list, wallpaper and hidden pages
   ui/Appearance.kt      the per-page control bodies and shared widgets
@@ -677,7 +698,7 @@ app/src/main/java/com/maria/homelauncher/
   ui/BackupPage.kt      save and load, and what does not travel
   ui/UpdatePage.kt      version, auto-check toggle, check and install
   ui/UpdateBanner.kt    the one-line offer on the home screen
-  ui/WidgetViews.kt     widget stack, settings page, provider picker
+  ui/WidgetViews.kt     settings page, catalogue grouped by app, drag-out hooks
   ui/GesturesPage.kt    one row per gesture, with its chooser
   ui/BadgesPage.kt      notification dots and their permission
   ui/AppEdit.kt         rename and change-icon dialog

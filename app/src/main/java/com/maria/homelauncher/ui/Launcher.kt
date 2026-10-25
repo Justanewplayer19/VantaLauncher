@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.Item
 import com.maria.homelauncher.LayoutStore
+import com.maria.homelauncher.Placed
 import com.maria.homelauncher.syncLayout
 import com.maria.homelauncher.AppEntry
 import com.maria.homelauncher.AppRepo
@@ -108,19 +109,51 @@ fun LauncherRoot(
     val context = LocalContext.current
 
     val layoutStore = remember { LayoutStore(context) }
-    var layout by remember { mutableStateOf(layoutStore.load()) }
+    var layout by remember {
+        mutableStateOf(openLayout(prefs, layoutStore, widgets, single, style.columns))
+    }
     var openFolder by remember { mutableStateOf<String?>(null) }
     var itemMenu by remember { mutableStateOf<Item?>(null) }
     var editFor by remember { mutableStateOf<AppEntry?>(null) }
+    var editingHome by remember { mutableStateOf(false) }
+    var cellDp by remember { mutableStateOf(72f to 96f) }
+    var pendingSpot by remember { mutableStateOf<Placed?>(null) }
     val scope = rememberCoroutineScope()
 
+    fun commit(next: List<Placed>) {
+        layout = next
+        layoutStore.save(next)
+    }
+
     // Reconcile the saved layout whenever the installed set or the hidden set changes.
+    // With one surface every app belongs on the pages; with a drawer the home screen
+    // only holds what was put there by hand.
     LaunchedEffect(apps, hidden, single) {
-        if (!single || apps.isEmpty()) return@LaunchedEffect
-        val synced = syncLayout(layout, apps, hidden)
-        if (synced != layout) {
-            layout = synced
-            layoutStore.save(synced)
+        if (apps.isEmpty()) return@LaunchedEffect
+        val alive = layout.filter {
+            val w = it.item as? Item.Widget ?: return@filter true
+            widgets.alive(w.appWidgetId)
+        }
+        val synced = syncLayout(alive, apps, hidden, addNew = single)
+        if (synced != layout) commit(synced)
+    }
+
+    // A widget is only ours once the system consent dialog and the widget's own setup
+    // screen are both done with, which is long after the tap that asked for it.
+    SideEffect {
+        widgets.onPlaced = { id ->
+            val spot = pendingSpot
+            pendingSpot = null
+            val landed = if (spot != null) {
+                spot.copy(item = Item.Widget(id))
+            } else {
+                val (w, h) = widgets.defaultSpan(
+                    widgets.manager.getAppWidgetInfo(id), cellDp.first, cellDp.second
+                )
+                Placed(Item.Widget(id), w = w, h = h)
+            }
+            commit(layout + landed)
+            editingHome = true
         }
     }
 
@@ -130,16 +163,12 @@ fun LauncherRoot(
             settingsOpen = false
             openFolder = null
             itemMenu = null
+            editingHome = false
         }
     }
 
     val byKey = remember(apps) { apps.associateBy { "${it.packageName}/${it.activityName}" } }
     val iconOf: (Item.App) -> AppEntry? = { byKey["${it.pkg}/${it.activity}"] }
-
-    fun commit(next: List<Item>) {
-        layout = next
-        layoutStore.save(next)
-    }
 
     // read from prefs at the moment the gesture happens, so a change in settings takes
     // effect without going back to the home screen first
@@ -165,6 +194,7 @@ fun LauncherRoot(
             settingsOpen -> settingsOpen = false
             openFolder != null -> openFolder = null
             drawerOpen -> setDrawerOpen(false)
+            editingHome -> editingHome = false
         }
     }
 
@@ -180,25 +210,43 @@ fun LauncherRoot(
     Box(Modifier.fillMaxSize()) {
         if (homeAlpha > 0f) {
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {
-                if (single) {
-                    SingleSurface(
-                        items = layout,
+                val grid = @Composable { modifier: Modifier ->
+                    HomeGrid(
+                        placed = layout,
                         iconOf = iconOf,
+                        widgets = widgets,
+                        editing = editingHome,
+                        onEditing = { editingHome = it },
                         onLaunch = { a -> iconOf(a)?.let(repo::launch) },
-                        onReorder = ::commit,
+                        onChange = { commit(it) },
                         onOpenFolder = { openFolder = it.id },
                         onItemMenu = { itemMenu = it },
+                        onPlaceWidget = { info, page, col, row, w, h ->
+                            pendingSpot = Placed(Item.Widget(-1), page, col, row, w, h)
+                            widgets.add(info)
+                        },
+                        onCellSize = { w, h -> cellDp = w to h },
+                        // with a drawer the home screen is yours to arrange, so an icon
+                        // can be taken off it; on one surface every app lives here and
+                        // removing one would only mean hiding it
+                        canRemoveApps = !single,
+                        modifier = modifier
+                    )
+                }
+
+                if (single) {
+                    SingleSurface(
+                        grid = grid,
                         onOpenSearch = { setDrawerOpen(true) },
-                        widgets = widgets,
                         onGesture = onGesture
                     )
                 } else {
                     HomeScreen(
                         apps = apps,
                         dock = dock,
+                        grid = grid,
                         onLaunch = repo::launch,
                         onOpenDrawer = { setDrawerOpen(true) },
-                        widgets = widgets,
                         onGesture = onGesture
                     )
                 }
@@ -227,6 +275,11 @@ fun LauncherRoot(
                     onUninstall = repo::uninstall,
                     onToggleDock = { prefs.toggleDock(it.packageName, style.dockMax); dock = prefs.dock },
                     onToggleHidden = { prefs.toggleHidden(it.packageName); hidden = prefs.hidden },
+                    onAddToHome = { a ->
+                        val fresh = Item.App(a.packageName, a.activityName)
+                        if (layout.none { it.item.key == fresh.key }) commit(layout + Placed(fresh))
+                        setDrawerOpen(false)
+                    },
                     onSettings = { settingsOpen = true },
                     onCustomise = { editFor = it },
                     onClose = { setDrawerOpen(false) }
@@ -235,7 +288,7 @@ fun LauncherRoot(
         }
 
         val folder = openFolder?.let { id ->
-            layout.firstOrNull { it is Item.Folder && it.id == id } as? Item.Folder
+            layout.firstOrNull { (it.item as? Item.Folder)?.id == id }?.item as? Item.Folder
         }
         if (folder != null) {
             FolderOverlay(
@@ -244,7 +297,9 @@ fun LauncherRoot(
                 onLaunch = { a -> iconOf(a)?.let(repo::launch) },
                 onRename = { newName ->
                     commit(layout.map {
-                        if (it is Item.Folder && it.id == folder.id) it.copy(name = newName) else it
+                        val f = it.item as? Item.Folder
+                        if (f != null && f.id == folder.id) it.copy(item = f.copy(name = newName))
+                        else it
                     })
                 },
                 onMoveOut = { app -> commit(moveOutOfFolder(layout, folder.id, app)) },
@@ -279,6 +334,10 @@ fun LauncherRoot(
                 onUninstall = { a -> iconOf(a)?.let(repo::uninstall); itemMenu = null },
                 onUngroup = { f -> commit(ungroup(layout, f.id)); itemMenu = null },
                 onCustomise = { a -> editFor = iconOf(a); itemMenu = null },
+                canRemove = !single,
+                onRemoveFromHome = { i ->
+                    commit(layout.filterNot { it.item.key == i.key }); itemMenu = null
+                },
                 onDismiss = { itemMenu = null }
             )
         }
@@ -301,6 +360,11 @@ fun LauncherRoot(
                 prefs = prefs,
                 apps = apps,
                 widgets = widgets,
+                homeItems = layout,
+                onRemoveWidget = { slot ->
+                    (slot.item as? Item.Widget)?.let { widgets.release(it.appWidgetId) }
+                    commit(layout.filterNot { it.item.key == slot.item.key })
+                },
                 style = style,
                 single = single,
                 onSingle = { single = it; prefs.singleSurface = it },
@@ -478,9 +542,9 @@ private fun Modifier.homeGestures(
 private fun HomeScreen(
     apps: List<AppEntry>,
     dock: List<String>,
+    grid: @Composable (Modifier) -> Unit,
     onLaunch: (AppEntry) -> Unit,
     onOpenDrawer: () -> Unit,
-    widgets: LauncherWidgets,
     onGesture: (String) -> Unit
 ) {
     val style = LocalStyle.current
@@ -500,15 +564,12 @@ private fun HomeScreen(
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(72.dp))
+        Spacer(Modifier.height(56.dp))
         Clock()
 
-        Box(
-            Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp, bottom = 8.dp),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            WidgetStack(widgets, Modifier.fillMaxWidth())
-        }
+        // Apps and widgets, wherever they were put. Empty until something is dragged
+        // here, which is the point: this mode starts as a clean wallpaper.
+        grid(Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp, bottom = 4.dp))
 
         val byPkg = apps.associateBy { it.packageName }
         val dockApps = dock.mapNotNull { byPkg[it] }.take(style.dockMax)
@@ -590,6 +651,7 @@ private fun AppDrawer(
     onUninstall: (AppEntry) -> Unit,
     onToggleDock: (AppEntry) -> Unit,
     onToggleHidden: (AppEntry) -> Unit,
+    onAddToHome: (AppEntry) -> Unit,
     onSettings: () -> Unit,
     onCustomise: (AppEntry) -> Unit,
     onClose: () -> Unit
@@ -694,6 +756,7 @@ private fun AppDrawer(
                 SheetRow(if (app.packageName in dock) "Remove from dock" else "Add to dock") {
                     onToggleDock(app); sheetFor = null
                 }
+                SheetRow("Add to home screen") { onAddToHome(app); sheetFor = null }
                 SheetRow(if (app.packageName in hidden) "Unhide" else "Hide app") {
                     onToggleHidden(app); sheetFor = null
                 }
@@ -837,18 +900,10 @@ private fun AppTile(
 
 @Composable
 private fun SingleSurface(
-    items: List<Item>,
-    iconOf: (Item.App) -> AppEntry?,
-    onLaunch: (Item.App) -> Unit,
-    onReorder: (List<Item>) -> Unit,
-    onOpenFolder: (Item.Folder) -> Unit,
-    onItemMenu: (Item) -> Unit,
+    grid: @Composable (Modifier) -> Unit,
     onOpenSearch: () -> Unit,
-    widgets: LauncherWidgets,
     onGesture: (String) -> Unit
 ) {
-    val style = LocalStyle.current
-
     Column(
         Modifier
             .fillMaxSize()
@@ -861,22 +916,7 @@ private fun SingleSurface(
             .displayCutoutPadding()
     ) {
         CompactClock()
-        WidgetStack(
-            widgets,
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = 300.dp)
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-        )
-        HomeGrid(
-            items = items,
-            iconOf = iconOf,
-            onLaunch = onLaunch,
-            onReorder = onReorder,
-            onOpenFolder = onOpenFolder,
-            onItemMenu = onItemMenu,
-            modifier = Modifier.weight(1f)
-        )
+        grid(Modifier.weight(1f))
         Spacer(Modifier.height(14.dp))
     }
 }
@@ -926,6 +966,8 @@ private fun ItemMenuSheet(
     onUninstall: (Item.App) -> Unit,
     onUngroup: (Item.Folder) -> Unit,
     onCustomise: (Item.App) -> Unit,
+    canRemove: Boolean,
+    onRemoveFromHome: (Item) -> Unit,
     onDismiss: () -> Unit
 ) {
     val style = LocalStyle.current
@@ -936,6 +978,7 @@ private fun ItemMenuSheet(
                 when (item) {
                     is Item.App -> iconOf(item)?.label ?: item.pkg
                     is Item.Folder -> item.name
+                    is Item.Widget -> "Widget"
                 },
                 color = LocalInk.current,
                 fontFamily = style.familyFor((item as? Item.App)?.let(iconOf)),
@@ -944,6 +987,7 @@ private fun ItemMenuSheet(
             )
             when (item) {
                 is Item.App -> {
+                    if (canRemove) SheetRow("Remove from home") { onRemoveFromHome(item) }
                     SheetRow(if (item.pkg in hidden) "Unhide" else "Hide app") { onHide(item) }
                     SheetRow("Rename or change icon") { onCustomise(item) }
                     SheetRow("App info") { onInfo(item) }
@@ -951,42 +995,88 @@ private fun ItemMenuSheet(
                 }
                 is Item.Folder -> {
                     SheetRow("Ungroup folder") { onUngroup(item) }
+                    if (canRemove) SheetRow("Remove from home") { onRemoveFromHome(item) }
                 }
+                is Item.Widget -> Unit
             }
         }
     }
 }
 
-/** Pulls one app back out of a folder and drops it next to that folder. */
-private fun moveOutOfFolder(items: List<Item>, folderId: String, app: Item.App): List<Item> {
-    val idx = items.indexOfFirst { it is Item.Folder && it.id == folderId }
+/**
+ * Reads the home layout, bringing it forward from the version that had no free
+ * placement if that has not been done yet.
+ *
+ * Back then the layout was one dense list that only the one-surface mode looked at, and
+ * widgets were a stack of their own. With a drawer that list is every app on the phone,
+ * which is not what anyone wants appearing on a home screen they never arranged, so it
+ * goes. The widgets come across and get spots on the grid.
+ *
+ * This happens before the first composition on purpose: the grid gives coordinates to
+ * anything that has none, and it would happily do that to a list on its way out.
+ */
+private fun openLayout(
+    prefs: Prefs,
+    store: LayoutStore,
+    widgets: LauncherWidgets,
+    single: Boolean,
+    columns: Int
+): List<Placed> {
+    val saved = store.load()
+    if (prefs.gridMigrated) return saved
+
+    var next = if (single) saved else saved.filter { it.item is Item.Widget }
+    val carried = widgets.stacked()
+    if (carried.isNotEmpty()) {
+        val have = next.mapNotNull { (it.item as? Item.Widget)?.appWidgetId }.toSet()
+        next = next + carried.filterNot { it.first in have }.map { (id, heightDp) ->
+            Placed(item = Item.Widget(id), w = columns, h = (heightDp / 96).coerceIn(1, 4))
+        }
+    }
+    widgets.forgetStacked()
+    store.save(next)
+    prefs.gridMigrated = true
+    return next
+}
+
+/**
+ * Pulls one app back out of a folder. It comes out unplaced, so the grid gives it the
+ * first free cell rather than landing it on top of something.
+ */
+private fun moveOutOfFolder(items: List<Placed>, folderId: String, app: Item.App): List<Placed> {
+    val idx = items.indexOfFirst { (it.item as? Item.Folder)?.id == folderId }
     if (idx < 0) return items
-    val f = items[idx] as Item.Folder
+    val slot = items[idx]
+    val f = slot.item as Item.Folder
     val remaining = f.apps.filterNot { it.pkg == app.pkg && it.activity == app.activity }
 
     val out = items.toMutableList()
     when (remaining.size) {
-        0 -> out[idx] = app
+        // the folder is gone either way, so the app that is left keeps the folder's cell
+        0 -> out[idx] = slot.copy(item = app)
         1 -> {
-            out[idx] = remaining.first()
-            out.add(idx + 1, app)
+            out[idx] = slot.copy(item = remaining.first())
+            out.add(idx + 1, Placed(app))
         }
         else -> {
-            out[idx] = f.copy(apps = remaining)
-            out.add(idx + 1, app)
+            out[idx] = slot.copy(item = f.copy(apps = remaining))
+            out.add(idx + 1, Placed(app))
         }
     }
     return out
 }
 
-/** Dissolves a folder, spilling its apps back onto the surface in place. */
-private fun ungroup(items: List<Item>, folderId: String): List<Item> {
-    val idx = items.indexOfFirst { it is Item.Folder && it.id == folderId }
+/** Dissolves a folder. The first app keeps its cell, the rest get spots of their own. */
+private fun ungroup(items: List<Placed>, folderId: String): List<Placed> {
+    val idx = items.indexOfFirst { (it.item as? Item.Folder)?.id == folderId }
     if (idx < 0) return items
-    val f = items[idx] as Item.Folder
+    val slot = items[idx]
+    val f = slot.item as Item.Folder
     val out = items.toMutableList()
     out.removeAt(idx)
-    out.addAll(idx, f.apps)
+    f.apps.forEachIndexed { i, app ->
+        out.add(idx + i, if (i == 0) slot.copy(item = app) else Placed(app))
+    }
     return out
 }
 

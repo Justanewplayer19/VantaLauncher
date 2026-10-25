@@ -30,6 +30,7 @@ import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.AppEntry
 import com.maria.homelauncher.LocalStyle
 import com.maria.homelauncher.LauncherWidgets
+import com.maria.homelauncher.Placed
 import com.maria.homelauncher.Prefs
 import com.maria.homelauncher.Fonts
 import com.maria.homelauncher.Backup
@@ -73,6 +74,8 @@ fun SettingsScreen(
     prefs: Prefs,
     apps: List<AppEntry>,
     widgets: LauncherWidgets,
+    homeItems: List<Placed>,
+    onRemoveWidget: (Placed) -> Unit,
     style: Style,
     single: Boolean,
     onSingle: (Boolean) -> Unit,
@@ -281,7 +284,7 @@ fun SettingsScreen(
                     )
                 }
 
-                Page.WidgetsPg -> WidgetsPage(widgets)
+                Page.WidgetsPg -> WidgetsPage(widgets, homeItems, onRemoveWidget)
 
                 Page.GesturesPg -> GesturesPage(prefs, apps, single)
 

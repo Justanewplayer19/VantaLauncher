@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,7 +60,7 @@ fun StylePreview(
     var pane by remember { mutableStateOf(Pane.Home) }
     val wallpaper = rememberWallpaper(wallpaperUris.firstOrNull())
 
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
         Row(
             Modifier.fillMaxWidth().padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -81,10 +82,17 @@ fun StylePreview(
             }
         }
 
+        // The same shape as the phone it is running on. Filling the settings column
+        // instead made a wide, short box that flattered nothing: spacing read as roomier
+        // than it is and a full page of icons would not fit the way it does here.
+        val cfg = LocalConfiguration.current
+        val shape = (cfg.screenWidthDp.toFloat() / cfg.screenHeightDp).coerceIn(0.4f, 0.75f)
+
         Box(
             Modifier
-                .fillMaxWidth()
-                .height(330.dp)
+                .align(Alignment.CenterHorizontally)
+                .height(380.dp)
+                .aspectRatio(shape)
                 .clip(RoundedCornerShape(22.dp))
                 .border(1.dp, LocalInk.current.copy(alpha = 0.15f), RoundedCornerShape(22.dp))
         ) {

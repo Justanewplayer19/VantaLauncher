@@ -58,6 +58,15 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("singleSurface", false)
         set(v) = sp.edit().putBoolean("singleSurface", v).apply()
 
+    /**
+     * False until the home layout has been moved onto the free-placement grid. The
+     * version before it kept one dense list of every app, which means nothing once the
+     * drawer mode has a home surface of its own.
+     */
+    var gridMigrated: Boolean
+        get() = sp.getBoolean("gridV2", false)
+        set(v) = sp.edit().putBoolean("gridV2", v).apply()
+
     /** Packages kept out of the grid; they only surface when the search box has text. */
     var hidden: Set<String>
         get() = list("hidden").toSet()

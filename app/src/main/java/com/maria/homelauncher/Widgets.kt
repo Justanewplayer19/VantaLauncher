@@ -8,20 +8,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-
-/** One widget the user has placed, and how tall they made it. */
-data class WidgetItem(val appWidgetId: Int, val heightDp: Int)
 
 private const val HOST_ID = 0x4D41
 const val REQ_WIDGET_BIND = 9001
 const val REQ_WIDGET_CONFIGURE = 9002
 
 /**
- * Everything widget-related in one place: the host, the saved list, and the two-step
- * add flow.
+ * The widget host and the two-step add flow. Where a widget sits and how big it is
+ * belongs to the home layout, like everything else on the surface, so this class only
+ * hands out ids and says when one is ready to be placed.
  *
  * Adding is not one call. A normal launcher does not hold BIND_APPWIDGET (it is a
  * privileged permission), so binding an id to a provider has to go through the system
@@ -37,20 +32,13 @@ class LauncherWidgets(private val act: ComponentActivity) {
     val manager: AppWidgetManager = AppWidgetManager.getInstance(act)
     val host = AppWidgetHost(act, HOST_ID)
 
-    var items by mutableStateOf(load())
-        private set
+    /** Called with a bound, configured id. The home layout decides where it lands. */
+    var onPlaced: ((Int) -> Unit)? = null
 
     /** The id waiting on a bind or configure result; -1 when nothing is in flight. */
     private var pending = -1
 
-    fun start() {
-        runCatching { host.startListening() }
-        // A restored backup carries widget ids, and a reinstall releases every id the
-        // host had handed out, so a restore onto a fresh install can name widgets that
-        // no longer exist. Pruning here rather than only on the widgets page means a
-        // dead frame never reaches the home screen in the first place.
-        runCatching { prune() }
-    }
+    fun start() { runCatching { host.startListening() } }
     fun stop() { runCatching { host.stopListening() } }
 
     fun providers(): List<AppWidgetProviderInfo> {
@@ -59,6 +47,8 @@ class LauncherWidgets(private val act: ComponentActivity) {
             it.loadLabel(pm).orEmpty().lowercase()
         }
     }
+
+    fun alive(appWidgetId: Int) = manager.getAppWidgetInfo(appWidgetId) != null
 
     @Suppress("DEPRECATION")
     fun add(info: AppWidgetProviderInfo) {
@@ -86,72 +76,57 @@ class LauncherWidgets(private val act: ComponentActivity) {
         }
         when (request) {
             REQ_WIDGET_BIND -> configureOrFinish(id)
-            REQ_WIDGET_CONFIGURE -> place(id)
+            REQ_WIDGET_CONFIGURE -> finish(id)
         }
     }
 
-    fun remove(appWidgetId: Int) {
-        items = items.filterNot { it.appWidgetId == appWidgetId }
-        save()
+    /** Hands the id back to the system. Called when a widget is taken off the surface. */
+    fun release(appWidgetId: Int) {
         runCatching { host.deleteAppWidgetId(appWidgetId) }
     }
 
-    fun setHeight(appWidgetId: Int, dp: Int) {
-        items = items.map {
-            if (it.appWidgetId == appWidgetId) it.copy(heightDp = dp.coerceIn(60, 420)) else it
+    /**
+     * How many cells wide and tall a provider asks to be, so a freshly added widget
+     * arrives at roughly its intended size instead of a single square.
+     */
+    fun defaultSpan(info: AppWidgetProviderInfo?, cellWidthDp: Float, cellHeightDp: Float): Pair<Int, Int> {
+        if (info == null || cellWidthDp <= 0f || cellHeightDp <= 0f) return 2 to 1
+        val wDp = info.minWidth / density
+        val hDp = info.minHeight / density
+        val w = Math.ceil((wDp / cellWidthDp).toDouble()).toInt().coerceIn(1, 8)
+        val h = Math.ceil((hDp / cellHeightDp).toDouble()).toInt().coerceIn(1, 8)
+        return w to h
+    }
+
+    /**
+     * Widgets placed by the version that stacked them vertically, read once so they can
+     * be moved onto the grid. [forgetStacked] drops the old store afterwards.
+     */
+    fun stacked(): List<Pair<Int, Int>> =
+        sp.getString("list", "")!!.split("|").filter { it.isNotBlank() }.mapNotNull { row ->
+            val bits = row.split(":")
+            val id = bits.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
+            id to (bits.getOrNull(1)?.toIntOrNull() ?: 120)
         }
-        save()
-    }
 
-    fun move(from: Int, to: Int) {
-        if (from == to || from !in items.indices || to !in items.indices) return
-        val out = items.toMutableList()
-        out.add(to, out.removeAt(from))
-        items = out
-        save()
-    }
-
-    /** Drops ids the system no longer knows about, so a dead frame cannot linger. */
-    fun prune() {
-        val live = items.filter { manager.getAppWidgetInfo(it.appWidgetId) != null }
-        if (live.size != items.size) { items = live; save() }
-    }
+    fun forgetStacked() = sp.edit().remove("list").apply()
 
     private fun configureOrFinish(id: Int) {
         val info = manager.getAppWidgetInfo(id)
-        if (info?.configure == null) { place(id); return }
+        if (info?.configure == null) { finish(id); return }
         pending = id
         val ok = runCatching {
             host.startAppWidgetConfigureActivityForResult(act, id, 0, REQ_WIDGET_CONFIGURE, null)
         }.isSuccess
         // some configure activities refuse to start for a third-party host; the widget
         // still works, it just gets whatever defaults it ships with
-        if (!ok) place(id)
+        if (!ok) finish(id)
     }
 
-    private fun place(id: Int) {
+    private fun finish(id: Int) {
         pending = -1
-        if (items.any { it.appWidgetId == id }) return
-        items = items + WidgetItem(id, defaultHeight(manager.getAppWidgetInfo(id)))
-        save()
+        onPlaced?.invoke(id)
     }
-
-    private fun defaultHeight(info: AppWidgetProviderInfo?): Int {
-        val px = info?.minHeight ?: 0
-        if (px <= 0) return 120
-        return (px / density).toInt().coerceIn(80, 300)
-    }
-
-    private fun load(): List<WidgetItem> =
-        sp.getString("list", "")!!.split("|").filter { it.isNotBlank() }.mapNotNull { row ->
-            val bits = row.split(":")
-            val id = bits.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
-            WidgetItem(id, bits.getOrNull(1)?.toIntOrNull() ?: 120)
-        }
-
-    private fun save() = sp.edit()
-        .putString("list", items.joinToString("|") { "${it.appWidgetId}:${it.heightDp}" })
-        .apply()
 
     companion object {
         /** Size hints an AppWidgetHostView wants in dp, not px. */

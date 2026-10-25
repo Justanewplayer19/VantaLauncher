@@ -148,8 +148,6 @@ object Backup {
         var restored = 0
         STORES.forEach { name ->
             val store = prefs.optJSONObject(name) ?: return@forEach
-            // widget ids belong to the phone that issued them
-            if (name == "widgets" && !sameDevice) return@forEach
             restoreStore(ctx, name, store, landed)
             restored++
         }
@@ -158,7 +156,15 @@ object Backup {
         return Result(
             ok = true,
             message = "Restored from ${root.optString("created", "an earlier backup")}.",
-            widgetsDropped = !sameDevice && prefs.has("widgets")
+            // widget ids belong to the phone that issued them, so the rows naming them
+            // come back dead on another device and the grid drops them on sight
+            widgetsDropped = !sameDevice && (
+                prefs.optJSONObject("layout")
+                    ?.optJSONObject("items")
+                    ?.optString("v")
+                    .orEmpty()
+                    .contains("\"t\":\"w\"")
+                )
         )
     }
 
