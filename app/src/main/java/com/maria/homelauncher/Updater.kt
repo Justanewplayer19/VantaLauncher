@@ -45,8 +45,8 @@ import java.util.concurrent.TimeUnit
  */
 object Updater {
 
-    /** Filled in when the repository exists. Blank means no update checking at all. */
-    const val OWNER = ""
+    /** Where releases are published. Blank would mean no update checking at all. */
+    const val OWNER = "Justanewplayer19"
     const val REPO = "VantaLauncher"
 
     private const val UA = "VantaLauncher"
