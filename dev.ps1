@@ -190,6 +190,6 @@ switch ($Command) {
         Write-Host "Publishing $tag..."
         & $gh release create $tag $named --title $tag --generate-notes
         if ($LASTEXITCODE -ne 0) { throw "Could not create the release." }
-        Write-Host "Released $tag. Installed copies will offer it within a day."
+        Write-Host "Released $tag. Installed copies check every few hours, and on launch."
     }
 }
