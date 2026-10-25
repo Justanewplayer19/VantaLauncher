@@ -101,6 +101,7 @@ fun LauncherRoot(
     var dock by remember { mutableStateOf(prefs.dock) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var settingsToUpdates by remember { mutableStateOf(false) }
     var intro by remember { mutableStateOf(!prefs.onboarded) }
     var welcome by remember { mutableStateOf(false) }
     var single by remember { mutableStateOf(prefs.singleSurface) }
@@ -310,14 +311,15 @@ fun LauncherRoot(
                 onReplayIntro = { prefs.onboarded = false; intro = true; settingsOpen = false },
                 styleStore = styleStore,
                 onImported = onImported,
-                onClose = { settingsOpen = false; hidden = prefs.hidden }
+                startOnUpdates = settingsToUpdates,
+                onClose = { settingsOpen = false; settingsToUpdates = false; hidden = prefs.hidden }
             )
         }
 
         // above the gesture bar, and only when nothing is covering the home screen
         if (!drawerOpen && !settingsOpen && !intro && !welcome) {
             Box(Modifier.fillMaxSize().systemBarsPadding(), contentAlignment = Alignment.BottomCenter) {
-                UpdateBanner(prefs, style) { settingsOpen = true }
+                UpdateBanner(prefs, style) { settingsToUpdates = true; settingsOpen = true }
             }
         }
 

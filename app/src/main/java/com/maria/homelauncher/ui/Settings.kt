@@ -81,12 +81,14 @@ fun SettingsScreen(
     onReplayIntro: () -> Unit,
     styleStore: StyleStore,
     onImported: () -> Unit,
+    /** Opened from the home screen's update offer, which means that page and not the list. */
+    startOnUpdates: Boolean = false,
     onClose: () -> Unit
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var page by remember { mutableStateOf(Page.Root) }
+    var page by remember { mutableStateOf(if (startOnUpdates) Page.UpdatePg else Page.Root) }
     var pics by remember { mutableStateOf(prefs.wallpapers) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var note by remember { mutableStateOf<String?>(null) }

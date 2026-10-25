@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.Prefs
 import com.maria.homelauncher.Style
 import com.maria.homelauncher.Updater
@@ -36,12 +37,17 @@ fun UpdateBanner(prefs: Prefs, style: Style, onOpenUpdates: () -> Unit) {
     if (!show) return
 
     val accent = Color(style.accent)
+    val ink = LocalInk.current
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            // clear of the dock and the "swipe up" hint, both of which live at the bottom
+            .padding(start = 16.dp, end = 16.dp, bottom = 104.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(accent.copy(alpha = 0.16f))
+            // the panel's own background rather than a tinted sheet: this sits on the
+            // user's wallpaper, which can be any colour, and a translucent accent on a
+            // light photo is unreadable
+            .background(Color(style.bgColor).copy(alpha = 0.94f))
             .clickable(onClick = onOpenUpdates)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -50,13 +56,13 @@ fun UpdateBanner(prefs: Prefs, style: Style, onOpenUpdates: () -> Unit) {
             Text("Version $version is ready", color = accent, fontSize = 14.sp)
             Text(
                 "Downloaded already. Tap to install.",
-                color = accent.copy(alpha = 0.7f),
+                color = ink.copy(alpha = 0.6f),
                 fontSize = 11.sp
             )
         }
         Text(
             "Later",
-            color = accent.copy(alpha = 0.7f),
+            color = ink.copy(alpha = 0.75f),
             fontSize = 12.sp,
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
@@ -64,7 +70,7 @@ fun UpdateBanner(prefs: Prefs, style: Style, onOpenUpdates: () -> Unit) {
                     prefs.dismissedVersion = version
                     version = ""
                 }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         )
     }
 }
