@@ -141,6 +141,51 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("liveLoop", true)
         set(v) = sp.edit().putBoolean("liveLoop", v).apply()
 
+    // --- lock screen, on screen off ---
+
+    /**
+     * Change the lock screen wallpaper every time the screen goes off, so the next time
+     * it comes on there is a different picture waiting.
+     *
+     * The home wallpaper is deliberately left alone: this is the one that is only ever
+     * seen for a few seconds at a time, which is what makes changing it that often fun
+     * rather than disorienting.
+     */
+    var lockRotate: Boolean
+        get() = sp.getBoolean("lockRotate", false)
+        set(v) = sp.edit().putBoolean("lockRotate", v).apply()
+
+    /** True picks any image, false walks the list in order. */
+    var lockRandom: Boolean
+        get() = sp.getBoolean("lockRandom", false)
+        set(v) = sp.edit().putBoolean("lockRandom", v).apply()
+
+    /** Its own place in the list, so it does not share with the timed rotation. */
+    var lockCursor: Int
+        get() = sp.getInt("lockCursor", 0)
+        set(v) = sp.edit().putInt("lockCursor", v).apply()
+
+    /** When the screen-off change last ran, to ignore a second broadcast for one press. */
+    var lockLast: Long
+        get() = sp.getLong("lockLast", 0L)
+        set(v) = sp.edit().putLong("lockLast", v).apply()
+
+    // --- home screen sound ---
+
+    /** An audio file played while the home screen is in front. Blank when there is none. */
+    var homeAudio: String
+        get() = sp.getString("homeAudio", "")!!
+        set(v) = sp.edit().putString("homeAudio", v).apply()
+
+    var audioLoop: Boolean
+        get() = sp.getBoolean("audioLoop", true)
+        set(v) = sp.edit().putBoolean("audioLoop", v).apply()
+
+    /** Percent. Ambience at the volume of a song is not ambience. */
+    var audioVolume: Int
+        get() = sp.getInt("audioVolume", 50).coerceIn(5, 100)
+        set(v) = sp.edit().putInt("audioVolume", v.coerceIn(5, 100)).apply()
+
     var rotateOn: Boolean
         get() = sp.getBoolean("rotateOn", false)
         set(v) = sp.edit().putBoolean("rotateOn", v).apply()

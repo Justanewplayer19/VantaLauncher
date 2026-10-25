@@ -26,20 +26,45 @@ object Wallpaper {
      */
     suspend fun advance(ctx: Context): Boolean = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
-        val uris = sources(ctx)
-        if (uris.isEmpty()) return@withContext false
+        step(ctx, prefs.rotateTarget, prefs.shuffle, prefs.cursor, true) { prefs.cursor = it }
+    }
 
-        // Walk the list from the cursor so a dead URI falls through to the next one
-        // instead of stalling the rotation forever.
-        val start = if (prefs.shuffle) uris.indices.random() else prefs.cursor % uris.size
-        for (step in uris.indices) {
-            val i = (start + step) % uris.size
-            if (apply(ctx, Uri.parse(uris[i]), prefs.rotateTarget)) {
-                prefs.cursor = (i + 1) % uris.size
-                return@withContext true
+    /**
+     * The lock screen only, for the screen-off change.
+     *
+     * It keeps a cursor of its own so it does not take turns with the timed rotation, and
+     * it does not sample an accent colour: the picture is gone again in a few seconds, and
+     * a theme that moves with it would be its own kind of annoying.
+     */
+    suspend fun advanceLock(ctx: Context): Boolean = withContext(Dispatchers.IO) {
+        val prefs = Prefs(ctx)
+        step(ctx, TARGET_LOCK, prefs.lockRandom, prefs.lockCursor, false) { prefs.lockCursor = it }
+    }
+
+    /**
+     * Walks the list from [from] so a dead URI falls through to the next one instead of
+     * stalling the rotation forever, and reports where it stopped.
+     */
+    private fun step(
+        ctx: Context,
+        target: Int,
+        random: Boolean,
+        from: Int,
+        record: Boolean,
+        save: (Int) -> Unit
+    ): Boolean {
+        val uris = sources(ctx)
+        if (uris.isEmpty()) return false
+
+        val start = if (random) uris.indices.random() else from.coerceAtLeast(0) % uris.size
+        for (n in uris.indices) {
+            val i = (start + n) % uris.size
+            if (apply(ctx, Uri.parse(uris[i]), target, record)) {
+                save((i + 1) % uris.size)
+                return true
             }
         }
-        false
+        return false
     }
 
     /**
@@ -88,7 +113,7 @@ object Wallpaper {
         return out.sorted()
     }
 
-    private fun apply(ctx: Context, uri: Uri, target: Int): Boolean {
+    private fun apply(ctx: Context, uri: Uri, target: Int, record: Boolean = true): Boolean {
         val wm = WallpaperManager.getInstance(ctx)
         val flags = when (target) {
             TARGET_HOME -> listOf(WallpaperManager.FLAG_SYSTEM)
@@ -124,7 +149,7 @@ object Wallpaper {
             }.getOrDefault(false)
             ok = ok || done
         }
-        if (ok) {
+        if (ok && record) {
             Prefs(ctx).lastWallpaper = uri.toString()
             WallpaperColour.applyIfWanted(ctx, uri)
         }

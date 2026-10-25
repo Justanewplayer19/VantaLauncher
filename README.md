@@ -20,6 +20,12 @@ app, so it stays.
   watched folder is re-read every time, so pictures added to it later join on their own
 - **Animated background** -- a GIF or a video played behind the launcher, set to repeat or
   to play once and hold on its last frame
+- **Lock screen on every screen off** -- a different picture waiting each time the screen
+  comes back on, in order or at random, drawn from the same images and folders. The lock
+  screen only: the home wallpaper is left where it is
+- **Home screen sound** -- an audio file played while the home screen is in front, with
+  repeat and a volume. It mixes under whatever is already playing rather than pausing it,
+  and stops the moment another app comes forward
 - **Drawer folders** -- group apps inside the drawer, rename them, ungroup them. A search
   flattens them so an app is never hidden behind one
 - **Single wallpaper** -- set one image immediately without turning rotation on
@@ -50,7 +56,7 @@ app, so it stays.
   live toggles for icon shape, columns, labels and single-surface mode. Skippable, and
   replayable from Settings.
 - Settings is a **list of pages**, not one long scroll: Home layout, Grid, Icons, Colours,
-  Text, Drawer, Wallpaper, Hidden apps, Intro and reset. Back steps up to the list before
+  Text, Drawer, Wallpaper, Sound, Hidden apps, Intro and reset. Back steps up to the list before
   it leaves settings. (in single-surface mode it is the
   "Settings" link at the bottom of the swipe-up search panel instead)
 - **Icon packs** -- any third-party icon theme installed on the device. The pack list is

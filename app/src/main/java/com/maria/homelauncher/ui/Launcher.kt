@@ -132,6 +132,9 @@ fun LauncherRoot(
     var homePages by remember { mutableStateOf(prefs.homePages) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var liveLoop by remember { mutableStateOf(prefs.liveLoop) }
+    var audio by remember { mutableStateOf(prefs.homeAudio) }
+    var audioLoop by remember { mutableStateOf(prefs.audioLoop) }
+    var audioVolume by remember { mutableStateOf(prefs.audioVolume) }
     var pendingSpot by remember { mutableStateOf<Placed?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -158,6 +161,9 @@ fun LauncherRoot(
         hidden = prefs.hidden
         liveBg = prefs.liveBg
         liveLoop = prefs.liveLoop
+        audio = prefs.homeAudio
+        audioLoop = prefs.audioLoop
+        audioVolume = prefs.audioVolume
     }
 
     fun commitFolders(next: List<DrawerFolder>) {
@@ -253,6 +259,10 @@ fun LauncherRoot(
         // behaves like the wallpaper: underneath everything, including the panels, which
         // are translucent over it the same way they are over a still image
         LiveBackground(liveBg, liveLoop, Modifier.fillMaxSize())
+
+        // draws nothing; it is here because this is what is alive exactly as long as the
+        // home screen is the thing in front
+        HomeAudio(audio, audioLoop, audioVolume)
 
         if (homeAlpha > 0f) {
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {

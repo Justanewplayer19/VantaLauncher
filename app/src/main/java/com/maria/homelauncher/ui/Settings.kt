@@ -64,6 +64,7 @@ internal enum class Page(val title: String, val blurb: String) {
     FontPg("Font", "Six providers, searched together"),
     DrawerPage("Drawer", "Browsing, search bar, button side"),
     WallpaperPg("Wallpaper", "Rotate a folder, or set one"),
+    SoundPg("Sound", "Play a track on the home screen"),
     Badges("Notification dots", "A dot on apps with something waiting"),
     Hidden("Hidden apps", "Only found by searching"),
     BackupPg("Backup", "Save your whole setup to a file"),
@@ -101,6 +102,7 @@ internal fun SettingsScreen(
     var pics by remember { mutableStateOf(prefs.wallpapers) }
     var picFolders by remember { mutableStateOf(prefs.wallpaperFolders) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
+    var audio by remember { mutableStateOf(prefs.homeAudio) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var note by remember { mutableStateOf<String?>(null) }
 
@@ -167,6 +169,24 @@ internal fun SettingsScreen(
         liveBg = uri.toString()
         prefs.liveBg = liveBg
         note = "animated background set"
+    }
+
+    val audioPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ok = runCatching {
+            ctx.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }.isSuccess
+        if (!ok) {
+            note = "could not keep access to that file"
+            return@rememberLauncherForActivityResult
+        }
+        audio = uri.toString()
+        prefs.homeAudio = audio
+        note = "track set"
     }
 
     // a font is not a well-known mime type on every device, so the filter is wide and the
@@ -364,6 +384,17 @@ internal fun SettingsScreen(
                     }
                 )
 
+                Page.SoundPg -> SoundPage(
+                    prefs = prefs,
+                    audio = audio,
+                    onPick = { audioPicker.launch(arrayOf("audio/*")) },
+                    onClear = {
+                        audio = ""
+                        prefs.homeAudio = ""
+                        note = "track removed"
+                    }
+                )
+
                 Page.Badges -> BadgesPage(style, onStyle)
 
                 Page.Hidden -> HiddenPage(apps, hidden) {
@@ -458,6 +489,8 @@ private fun WallpaperPage(
     val ctx = LocalContext.current
     var on by remember { mutableStateOf(prefs.rotateOn) }
     var loop by remember { mutableStateOf(prefs.liveLoop) }
+    var lockOn by remember { mutableStateOf(prefs.lockRotate) }
+    var lockRandom by remember { mutableStateOf(prefs.lockRandom) }
 
     // read off the disk rather than from what was saved, so a watched folder reports what
     // is in it now and not what was in it when it was picked
@@ -545,6 +578,29 @@ private fun WallpaperPage(
     }
 
     Spacer(Modifier.height(26.dp))
+    Label("Lock screen, on every screen off")
+    Spacer(Modifier.height(6.dp))
+    ToggleRow("New picture each time the screen goes off", lockOn) {
+        lockOn = it
+        prefs.lockRotate = it
+    }
+    if (lockOn) {
+        Spacer(Modifier.height(10.dp))
+        val orders = listOf(false to "In order", true to "Random")
+        ChipRow(orders.map { it.second }, orders.indexOfFirst { it.first == lockRandom }) { i ->
+            lockRandom = orders[i].first
+            prefs.lockRandom = lockRandom
+        }
+    }
+    Hint(
+        "Uses the same images and folders as the rotation above, and touches the lock " +
+            "screen only, so your home wallpaper stays where it is. The change happens " +
+            "on the way off rather than on the way on, so it is already there when the " +
+            "screen lights up. It keeps its own place in the list, separate from the " +
+            "timed rotation."
+    )
+
+    Spacer(Modifier.height(26.dp))
     Label("Animated background")
     Text(
         if (liveBg.isBlank()) "None"
@@ -578,6 +634,78 @@ private fun WallpaperPage(
             "what you see under other apps and on the lock screen is still the picture " +
             "above."
     )
+}
+
+@Composable
+private fun SoundPage(
+    prefs: Prefs,
+    audio: String,
+    onPick: () -> Unit,
+    onClear: () -> Unit
+) {
+    val ctx = LocalContext.current
+    var loop by remember { mutableStateOf(prefs.audioLoop) }
+    var volume by remember { mutableStateOf(prefs.audioVolume) }
+
+    val name = remember(audio) {
+        if (audio.isBlank()) "" else runCatching {
+            ctx.contentResolver.query(
+                android.net.Uri.parse(audio),
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null
+            )?.use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull().orEmpty()
+    }
+
+    Text(
+        "A track that plays while the home screen is in front, and stops the moment you " +
+            "open something else. MP3, OGG, WAV, M4A, anything the phone can play.",
+        color = LocalInk.current.copy(alpha = 0.55f),
+        fontSize = 12.sp,
+        modifier = Modifier.padding(bottom = 12.dp)
+    )
+
+    Label("Track")
+    Text(
+        when {
+            audio.isBlank() -> "None"
+            name.isNotBlank() -> name
+            else -> "One file chosen"
+        },
+        color = LocalInk.current.copy(alpha = 0.65f),
+        fontSize = 13.sp,
+        modifier = Modifier.padding(vertical = 6.dp)
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onPick) {
+            Text(if (audio.isBlank()) "Choose a file" else "Change")
+        }
+        if (audio.isNotBlank()) OutlinedButton(onClick = onClear) { Text("Remove") }
+    }
+
+    if (audio.isNotBlank()) {
+        Spacer(Modifier.height(18.dp))
+        ToggleRow("Repeat", loop) {
+            loop = it
+            prefs.audioLoop = it
+        }
+        Hint(
+            if (loop) "Starts again every time it reaches the end."
+            else "Plays once each time you come back to the home screen."
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Label("Volume")
+        val levels = listOf(10, 25, 50, 75, 100)
+        ChipRow(levels.map { "$it%" }, levels.indexOfFirst { it == volume }) { i ->
+            volume = levels[i]
+            prefs.audioVolume = volume
+        }
+        Hint(
+            "Set against whatever the media volume is, and mixed under anything already " +
+                "playing rather than pausing it. Nothing here interrupts your music."
+        )
+    }
 }
 
 @Composable
