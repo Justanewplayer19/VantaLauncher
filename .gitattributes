@@ -1,0 +1,19 @@
+# Normalise line endings so a checkout on another machine does not show the
+# whole tree as modified.
+* text=auto
+
+*.kt      text diff=java
+*.kts     text
+*.xml     text
+*.md      text
+*.pro     text
+gradlew   text eol=lf
+*.bat     text eol=crlf
+*.ps1     text eol=crlf
+
+*.jar     binary
+*.apk     binary
+*.jks     binary
+*.keystore binary
+*.png     binary
+*.ttf     binary
