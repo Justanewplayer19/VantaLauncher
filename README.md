@@ -582,6 +582,43 @@ A clone without the key still builds a release: it comes out unsigned rather tha
 Debug and release are signed with different keys, so a phone cannot have both. Installing one
 over the other means uninstalling first, and that erases everything.
 
+### Updates
+
+The launcher watches its own GitHub releases. A WorkManager job runs once a day, on an
+unmetered network and not on a low battery, reads the latest release, compares its tag
+against the installed `versionName`, and downloads the attached APK in the background.
+Unmetered because this ends in a seven megabyte download nobody agreed to pay for.
+
+**It cannot install silently.** Android allows that only for an app that owns the device or
+is part of the system image, and this is neither, so the last step is always a tap on
+Android's own installer dialog. Everything before it is automatic, which was the tedious
+part. `REQUEST_INSTALL_PACKAGES` only buys the right to ask; the user still has to allow
+installs from this app once, on a system screen that is not a runtime prompt.
+
+No notification permission is requested. Android 13 made posting one a prompt, and asking on
+first run to say "there might be an update one day" is a poor trade when this app *is* the
+home screen. A ready update says so in a pill above the dock, and "Later" sets that version
+aside rather than the row forever.
+
+Three things have to line up, and `dev.ps1 release` does all three so none of them depends
+on anyone remembering:
+
+- **The tag is the version.** `v0.3` means versionName `0.3`. `Updater.newer` compares them
+  as dotted numbers, so 0.10 is correctly newer than 0.9 where a string compare says the
+  opposite.
+- **The APK is attached to the release**, since that is what gets downloaded.
+- **It is signed with the same key as the installed copy.** Android refuses the install
+  otherwise, with a message that does not explain why. A debug build cannot update a release
+  build, or the other way round. This is the one that will waste an afternoon.
+
+The download is size-checked against what the release says before it is ever offered, because
+a truncated APK installs as nothing but an error. It lands in the cache, under a name carrying
+its version, and any other file in that folder is cleared first so an abandoned attempt is
+never mistaken for the real thing.
+
+The `FileProvider` is scoped to that one cache folder, so it cannot be talked into handing out
+anything else the app stores.
+
 ## Running it on another phone
 
 minSdk is 26, targetSdk 35, and lint reports no `NewApi` findings, so nothing calls an API
@@ -619,6 +656,7 @@ app/src/main/java/com/maria/homelauncher/
   IconPack.kt           third-party icon themes: discovery, appfilter, masking
   Overrides.kt          per-app name and icon replacements
   Backup.kt             the whole setup to one file, and back
+  Updater.kt            release checking, download, and the install hand-off
   Gestures.kt           accessibility service and the gesture actions
   Fonts.kt              the six font providers, behind one id
   FontWeb.kt            Google, Fontsource and Fontshare over plain HTTP
@@ -637,6 +675,8 @@ app/src/main/java/com/maria/homelauncher/
   ui/FontPage.kt        the font picker: provider dots, search, keep
   ui/ThemesPage.kt      the preset list, each row in its own colours
   ui/BackupPage.kt      save and load, and what does not travel
+  ui/UpdatePage.kt      version, auto-check toggle, check and install
+  ui/UpdateBanner.kt    the one-line offer on the home screen
   ui/WidgetViews.kt     widget stack, settings page, provider picker
   ui/GesturesPage.kt    one row per gesture, with its chooser
   ui/BadgesPage.kt      notification dots and their permission
