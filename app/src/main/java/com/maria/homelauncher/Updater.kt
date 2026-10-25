@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Updates, without going to the website.
  *
- * The launcher watches its own GitHub releases, downloads a newer APK on wifi, and then
- * offers to install it. What it cannot do is install it silently: Android only allows that
+ * The launcher watches its own GitHub releases, downloads a newer APK and then offers to
+ * install it. What it cannot do is install it silently: Android only allows that
  * for an app that owns the device or is part of the system image, and this is neither. So
  * the last step is always a tap on Android's own installer dialog. Everything before that
  * step is automatic, which is the part that was actually tedious.
@@ -33,8 +33,8 @@ import java.util.concurrent.TimeUnit
  * than obvious, so they are worth stating:
  *
  *  - **The new APK must be signed with the same key as the installed one.** Android refuses
- *    the install otherwise, with a message that does not explain why. A debug build cannot
- *    update a release build, or the other way round.
+ *    the install otherwise, with a message that does not explain why. Two builds signed with
+ *    different keys can never replace one another.
  *  - **The release tag is the version.** `v0.3` means versionName `0.3`. [newer] compares
  *    those numbers, so a tag that is not a version means no update is ever offered.
  *  - **The APK has to be an asset on the release**, not just source code, since that is
@@ -51,6 +51,12 @@ object Updater {
 
     private const val UA = "VantaLauncher"
     private const val WORK_NAME = "update-check"
+
+    /** How often the background check runs. WorkManager refuses anything under 15 minutes. */
+    private const val EVERY_MINUTES = 180L
+
+    /** A check when the launcher comes back is skipped if one happened this recently. */
+    private const val FRESH_MINUTES = 45L
 
     val configured: Boolean get() = OWNER.isNotBlank()
 
@@ -170,17 +176,31 @@ object Updater {
             wm.cancelUniqueWork(WORK_NAME)
             return
         }
-        // once a day is plenty for a launcher, and unmetered because this ends in a
-        // download of several megabytes that nobody asked to pay for
-        val req = PeriodicWorkRequestBuilder<UpdateWorker>(1, TimeUnit.DAYS)
+        // Any connection, not just wifi. A launcher that only updates at home can sit on an
+        // old build for weeks, and the download is a few megabytes once per release.
+        // WorkManager treats the interval as "at most once per window" and batches it with
+        // whatever else the system is already waking for, so a short one is not a drain.
+        val req = PeriodicWorkRequestBuilder<UpdateWorker>(EVERY_MINUTES, TimeUnit.MINUTES)
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.UNMETERED)
-                    .setRequiresBatteryNotLow(true)
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
             )
             .build()
         wm.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, req)
+    }
+
+    /**
+     * A check when the launcher starts, which is what actually makes an update turn up
+     * promptly: a periodic job runs when the system feels like it, and the home screen is
+     * opened dozens of times a day. Throttled so that is not dozens of requests.
+     */
+    suspend fun checkIfStale(ctx: Context) {
+        val prefs = Prefs(ctx)
+        if (!configured || !prefs.autoUpdate) return
+        val since = System.currentTimeMillis() - prefs.lastUpdateCheck
+        if (since < TimeUnit.MINUTES.toMillis(FRESH_MINUTES)) return
+        runCatching { checkAndFetch(ctx) }
     }
 
     /**
@@ -218,7 +238,7 @@ object Updater {
 
 class UpdateWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
-        // a failed check is not worth retrying hard: there will be another one tomorrow,
+        // a failed check is not worth retrying hard: there will be another one shortly,
         // and the user can always press the button
         Updater.checkAndFetch(applicationContext)
         return Result.success()

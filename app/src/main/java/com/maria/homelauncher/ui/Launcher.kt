@@ -59,6 +59,14 @@ import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.Item
 import com.maria.homelauncher.LayoutStore
 import com.maria.homelauncher.Placed
+import com.maria.homelauncher.DrawerCell
+import com.maria.homelauncher.DrawerFolder
+import com.maria.homelauncher.DrawerStore
+import com.maria.homelauncher.addToFolder
+import com.maria.homelauncher.compactPages
+import com.maria.homelauncher.drawerCells
+import com.maria.homelauncher.newDrawerFolderId
+import com.maria.homelauncher.removeFromFolders
 import com.maria.homelauncher.syncLayout
 import com.maria.homelauncher.AppEntry
 import com.maria.homelauncher.AppRepo
@@ -102,17 +110,21 @@ fun LauncherRoot(
     var dock by remember { mutableStateOf(prefs.dock) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var settingsToUpdates by remember { mutableStateOf(false) }
+    var settingsAt by remember { mutableStateOf<Page?>(null) }
     var intro by remember { mutableStateOf(!prefs.onboarded) }
     var welcome by remember { mutableStateOf(false) }
     var single by remember { mutableStateOf(prefs.singleSurface) }
     val context = LocalContext.current
 
     val layoutStore = remember { LayoutStore(context) }
+    val drawerStore = remember { DrawerStore(context) }
+    var drawerFolders by remember { mutableStateOf(drawerStore.load()) }
+    var drawerFolder by remember { mutableStateOf<String?>(null) }
     var layout by remember {
         mutableStateOf(openLayout(prefs, layoutStore, widgets, single, style.columns))
     }
     var openFolder by remember { mutableStateOf<String?>(null) }
+
     var itemMenu by remember { mutableStateOf<Item?>(null) }
     var editFor by remember { mutableStateOf<AppEntry?>(null) }
     var editingHome by remember { mutableStateOf(false) }
@@ -123,6 +135,11 @@ fun LauncherRoot(
     fun commit(next: List<Placed>) {
         layout = next
         layoutStore.save(next)
+    }
+
+    fun commitFolders(next: List<DrawerFolder>) {
+        drawerFolders = next
+        drawerStore.save(next)
     }
 
     // Reconcile the saved layout whenever the installed set or the hidden set changes.
@@ -162,6 +179,7 @@ fun LauncherRoot(
         if (resetPanels > 0) {
             settingsOpen = false
             openFolder = null
+            drawerFolder = null
             itemMenu = null
             editingHome = false
         }
@@ -193,6 +211,7 @@ fun LauncherRoot(
             intro -> Unit
             settingsOpen -> settingsOpen = false
             openFolder != null -> openFolder = null
+            drawerFolder != null -> drawerFolder = null
             drawerOpen -> setDrawerOpen(false)
             editingHome -> editingHome = false
         }
@@ -216,11 +235,21 @@ fun LauncherRoot(
                         iconOf = iconOf,
                         widgets = widgets,
                         editing = editingHome,
-                        onEditing = { editingHome = it },
+                        onEditing = { on ->
+                            editingHome = on
+                            // a page swiped out to and then left behind would otherwise
+                            // stay as a gap in the numbering
+                            if (!on) {
+                                val tidy = compactPages(layout)
+                                if (tidy !== layout) commit(tidy)
+                            }
+                        },
                         onLaunch = { a -> iconOf(a)?.let(repo::launch) },
                         onChange = { commit(it) },
                         onOpenFolder = { openFolder = it.id },
                         onItemMenu = { itemMenu = it },
+                        onWallpaper = { settingsAt = Page.WallpaperPg; settingsOpen = true },
+                        onStyle = { settingsAt = Page.ThemesPg; settingsOpen = true },
                         onPlaceWidget = { info, page, col, row, w, h ->
                             pendingSpot = Placed(Item.Widget(-1), page, col, row, w, h)
                             widgets.add(info)
@@ -275,6 +304,26 @@ fun LauncherRoot(
                     onUninstall = repo::uninstall,
                     onToggleDock = { prefs.toggleDock(it.packageName, style.dockMax); dock = prefs.dock },
                     onToggleHidden = { prefs.toggleHidden(it.packageName); hidden = prefs.hidden },
+                    folders = drawerFolders,
+                    iconOf = iconOf,
+                    onOpenFolder = { drawerFolder = it.id },
+                    onNewFolder = { a ->
+                        val id = newDrawerFolderId()
+                        commitFolders(
+                            drawerFolders + DrawerFolder(
+                                id = id,
+                                name = "Folder",
+                                members = listOf("${a.packageName}/${a.activityName}")
+                            )
+                        )
+                        drawerFolder = id
+                    },
+                    onPutInFolder = { a, id ->
+                        commitFolders(
+                            addToFolder(drawerFolders, id, "${a.packageName}/${a.activityName}")
+                        )
+                    },
+                    onUngroupFolder = { f -> commitFolders(drawerFolders.filterNot { it.id == f.id }) },
                     onAddToHome = { a ->
                         val fresh = Item.App(a.packageName, a.activityName)
                         if (layout.none { it.item.key == fresh.key }) commit(layout + Placed(fresh))
@@ -304,6 +353,40 @@ fun LauncherRoot(
                 },
                 onMoveOut = { app -> commit(moveOutOfFolder(layout, folder.id, app)) },
                 onClose = { openFolder = null }
+            )
+        }
+
+        // the same overlay the home screen uses, over the drawer instead
+        val fromDrawer = drawerFolder?.let { id ->
+            drawerFolders.firstOrNull { it.id == id }?.let { f ->
+                Item.Folder(
+                    id = f.id,
+                    name = f.name,
+                    apps = f.members.filter { byKey.containsKey(it) }
+                        .map { Item.App(it.substringBefore('/'), it.substringAfter('/')) }
+                )
+            }
+        }
+        if (fromDrawer != null) {
+            FolderOverlay(
+                folder = fromDrawer,
+                iconOf = iconOf,
+                onLaunch = { a ->
+                    iconOf(a)?.let(repo::launch)
+                    drawerFolder = null
+                    setDrawerOpen(false)
+                },
+                onRename = { newName ->
+                    commitFolders(drawerFolders.map {
+                        if (it.id == fromDrawer.id) it.copy(name = newName) else it
+                    })
+                },
+                onMoveOut = { app ->
+                    commitFolders(
+                        removeFromFolders(drawerFolders, "${app.pkg}/${app.activity}")
+                    )
+                },
+                onClose = { drawerFolder = null }
             )
         }
 
@@ -375,15 +458,15 @@ fun LauncherRoot(
                 onReplayIntro = { prefs.onboarded = false; intro = true; settingsOpen = false },
                 styleStore = styleStore,
                 onImported = onImported,
-                startOnUpdates = settingsToUpdates,
-                onClose = { settingsOpen = false; settingsToUpdates = false; hidden = prefs.hidden }
+                startPage = settingsAt,
+                onClose = { settingsOpen = false; settingsAt = null; hidden = prefs.hidden }
             )
         }
 
         // above the gesture bar, and only when nothing is covering the home screen
         if (!drawerOpen && !settingsOpen && !intro && !welcome) {
             Box(Modifier.fillMaxSize().systemBarsPadding(), contentAlignment = Alignment.BottomCenter) {
-                UpdateBanner(prefs, style) { settingsToUpdates = true; settingsOpen = true }
+                UpdateBanner(prefs, style) { settingsAt = Page.UpdatePg; settingsOpen = true }
             }
         }
 
@@ -651,6 +734,12 @@ private fun AppDrawer(
     onUninstall: (AppEntry) -> Unit,
     onToggleDock: (AppEntry) -> Unit,
     onToggleHidden: (AppEntry) -> Unit,
+    folders: List<DrawerFolder>,
+    iconOf: (Item.App) -> AppEntry?,
+    onOpenFolder: (Item.Folder) -> Unit,
+    onNewFolder: (AppEntry) -> Unit,
+    onPutInFolder: (AppEntry, String) -> Unit,
+    onUngroupFolder: (Item.Folder) -> Unit,
     onAddToHome: (AppEntry) -> Unit,
     onSettings: () -> Unit,
     onCustomise: (AppEntry) -> Unit,
@@ -695,6 +784,16 @@ private fun AppDrawer(
         else apps.filter { it.label.contains(query, ignoreCase = true) }
     }
 
+    // Folders group the list, so a search flattens them again: looking for an app by name
+    // and being told it is inside something would be a worse answer than just showing it.
+    val cells = remember(shown, folders, query) {
+        if (query.isBlank()) drawerCells(shown, folders)
+        else shown.map { DrawerCell.Single(it) }
+    }
+
+    var folderSheet by remember { mutableStateOf<Item.Folder?>(null) }
+    var pickFolderFor by remember { mutableStateOf<AppEntry?>(null) }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -717,20 +816,25 @@ private fun AppDrawer(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (style.showLabels) 16.dp else 20.dp)
             ) {
-                items(shown, key = { it.packageName + it.activityName }) { app ->
-                    AppTile(
-                        app = app,
-                        showLabel = style.showLabels,
-                        onClick = { onLaunch(app) },
-                        onLongClick = { sheetFor = app }
+                items(cells, key = { cellKey(it) }) { cell ->
+                    DrawerTile(
+                        cell = cell,
+                        iconOf = iconOf,
+                        onLaunch = onLaunch,
+                        onOpenFolder = onOpenFolder,
+                        onAppMenu = { sheetFor = it },
+                        onFolderMenu = { folderSheet = it }
                     )
                 }
             }
 
             DrawerMode.Pages -> PagedAppGrid(
-                apps = shown,
+                cells = cells,
+                iconOf = iconOf,
                 onLaunch = onLaunch,
-                onLongClick = { sheetFor = it }
+                onOpenFolder = onOpenFolder,
+                onAppMenu = { sheetFor = it },
+                onFolderMenu = { folderSheet = it }
             )
         }
         }
@@ -757,6 +861,7 @@ private fun AppDrawer(
                     onToggleDock(app); sheetFor = null
                 }
                 SheetRow("Add to home screen") { onAddToHome(app); sheetFor = null }
+                SheetRow("Put in a folder") { pickFolderFor = app; sheetFor = null }
                 SheetRow(if (app.packageName in hidden) "Unhide" else "Hide app") {
                     onToggleHidden(app); sheetFor = null
                 }
@@ -764,6 +869,86 @@ private fun AppDrawer(
                 SheetRow("App info") { onInfo(app); sheetFor = null }
                 SheetRow("Uninstall") { onUninstall(app); sheetFor = null }
             }
+        }
+    }
+
+    folderSheet?.let { folder ->
+        ModalBottomSheet(
+            onDismissRequest = { folderSheet = null },
+            containerColor = Color(style.bgColor)
+        ) {
+            Column(Modifier.padding(bottom = 28.dp)) {
+                Text(
+                    folder.name,
+                    color = LocalInk.current,
+                    fontFamily = style.fontFamily,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    fontSize = 18.sp
+                )
+                // the name is editable inside the folder, so renaming is just opening it
+                SheetRow("Open and rename") { onOpenFolder(folder); folderSheet = null }
+                SheetRow("Ungroup folder") { onUngroupFolder(folder); folderSheet = null }
+            }
+        }
+    }
+
+    pickFolderFor?.let { app ->
+        ModalBottomSheet(
+            onDismissRequest = { pickFolderFor = null },
+            containerColor = Color(style.bgColor)
+        ) {
+            Column(Modifier.padding(bottom = 28.dp)) {
+                Text(
+                    "Put ${app.label} in",
+                    color = LocalInk.current,
+                    fontFamily = style.fontFamily,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    fontSize = 18.sp
+                )
+                SheetRow("New folder") { onNewFolder(app); pickFolderFor = null }
+                folders.forEach { f ->
+                    SheetRow(f.name) { onPutInFolder(app, f.id); pickFolderFor = null }
+                }
+            }
+        }
+    }
+}
+
+/** A stable key per drawer row, so the grid does not rebuild everything on a change. */
+private fun cellKey(cell: DrawerCell): String = when (cell) {
+    is DrawerCell.Group -> "f:${cell.folder.id}"
+    is DrawerCell.Single -> "a:${cell.app.packageName}/${cell.app.activityName}"
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DrawerTile(
+    cell: DrawerCell,
+    iconOf: (Item.App) -> AppEntry?,
+    onLaunch: (AppEntry) -> Unit,
+    onOpenFolder: (Item.Folder) -> Unit,
+    onAppMenu: (AppEntry) -> Unit,
+    onFolderMenu: (Item.Folder) -> Unit
+) {
+    val style = LocalStyle.current
+    when (cell) {
+        is DrawerCell.Single -> AppTile(
+            app = cell.app,
+            showLabel = style.showLabels,
+            onClick = { onLaunch(cell.app) },
+            onLongClick = { onAppMenu(cell.app) }
+        )
+
+        is DrawerCell.Group -> Box(
+            Modifier
+                .clip(RoundedCornerShape(18.dp))
+                .combinedClickable(
+                    onClick = { onOpenFolder(cell.folder) },
+                    onLongClick = { onFolderMenu(cell.folder) }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            ItemTile(item = cell.folder, iconOf = iconOf)
         }
     }
 }
@@ -1083,9 +1268,12 @@ private fun ungroup(items: List<Placed>, folderId: String): List<Placed> {
 /** Drawer laid out as swipeable pages instead of one long scroll. */
 @Composable
 private fun PagedAppGrid(
-    apps: List<AppEntry>,
+    cells: List<DrawerCell>,
+    iconOf: (Item.App) -> AppEntry?,
     onLaunch: (AppEntry) -> Unit,
-    onLongClick: (AppEntry) -> Unit,
+    onOpenFolder: (Item.Folder) -> Unit,
+    onAppMenu: (AppEntry) -> Unit,
+    onFolderMenu: (Item.Folder) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -1098,13 +1286,13 @@ private fun PagedAppGrid(
         }
         val rows = maxOf(1, floor(with(density) { maxHeight.toPx() } / cellH).toInt())
         val capacity = cols * rows
-        val pages = remember(apps, capacity) {
-            apps.chunked(capacity).ifEmpty { listOf(emptyList()) }
+        val pages = remember(cells, capacity) {
+            cells.chunked(capacity).ifEmpty { listOf(emptyList()) }
         }
         val pagerState = rememberPagerState(pageCount = { pages.size })
 
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-            val pageApps = pages.getOrElse(page) { emptyList() }
+            val pageCells = pages.getOrElse(page) { emptyList() }
             Column(Modifier.fillMaxSize()) {
                 repeat(rows) { r ->
                     Row(Modifier.fillMaxWidth().weight(1f)) {
@@ -1113,12 +1301,14 @@ private fun PagedAppGrid(
                                 Modifier.weight(1f).fillMaxHeight(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                pageApps.getOrNull(r * cols + c)?.let { app ->
-                                    AppTile(
-                                        app = app,
-                                        showLabel = style.showLabels,
-                                        onClick = { onLaunch(app) },
-                                        onLongClick = { onLongClick(app) }
+                                pageCells.getOrNull(r * cols + c)?.let { cell ->
+                                    DrawerTile(
+                                        cell = cell,
+                                        iconOf = iconOf,
+                                        onLaunch = onLaunch,
+                                        onOpenFolder = onOpenFolder,
+                                        onAppMenu = onAppMenu,
+                                        onFolderMenu = onFolderMenu
                                     )
                                 }
                             }

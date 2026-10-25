@@ -103,7 +103,10 @@ fun UpdatePage(prefs: Prefs) {
         prefs.autoUpdate = it
         Updater.schedule(ctx)
     }
-    Hint("Once a day, on wifi only, and only when the battery is not low.")
+    Hint(
+        "Checked every few hours in the background, and again when you come back to the " +
+            "home screen. Wifi or mobile data, whichever is on."
+    )
 
     Spacer(Modifier.height(16.dp))
     OutlinedButton(

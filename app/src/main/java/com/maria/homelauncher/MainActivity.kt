@@ -127,6 +127,9 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         widgets.start()
+        // The home screen is opened all day, so this is what makes a new release turn up
+        // the same hour it lands rather than whenever the periodic job happens to run.
+        lifecycleScope.launch { Updater.checkIfStale(this@MainActivity) }
         // the rotation worker can write an accent while we were away
         val fresh = styleStore.load()
         if (fresh != style) updateStyle(fresh)

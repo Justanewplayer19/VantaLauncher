@@ -42,7 +42,11 @@ import com.maria.homelauncher.TARGET_LOCK
 import com.maria.homelauncher.Wallpaper
 import kotlinx.coroutines.launch
 
-private enum class Page(val title: String, val blurb: String) {
+/**
+ * Internal rather than private: the home screen's own edit bar opens some of these
+ * directly, so it has to be able to name one.
+ */
+internal enum class Page(val title: String, val blurb: String) {
     Root("Settings", ""),
     ThemesPg("Themes", "Whole looks, in one tap"),
     HomeLayout("Home layout", "Drawer or one surface"),
@@ -70,7 +74,7 @@ private val intervals = listOf(
 )
 
 @Composable
-fun SettingsScreen(
+internal fun SettingsScreen(
     prefs: Prefs,
     apps: List<AppEntry>,
     widgets: LauncherWidgets,
@@ -84,14 +88,14 @@ fun SettingsScreen(
     onReplayIntro: () -> Unit,
     styleStore: StyleStore,
     onImported: () -> Unit,
-    /** Opened from the home screen's update offer, which means that page and not the list. */
-    startOnUpdates: Boolean = false,
+    /** Set when something opened settings at a particular page rather than at the list. */
+    startPage: Page? = null,
     onClose: () -> Unit
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var page by remember { mutableStateOf(if (startOnUpdates) Page.UpdatePg else Page.Root) }
+    var page by remember { mutableStateOf(startPage ?: Page.Root) }
     var pics by remember { mutableStateOf(prefs.wallpapers) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var note by remember { mutableStateOf<String?>(null) }

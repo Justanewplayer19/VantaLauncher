@@ -197,11 +197,6 @@ parses what packs actually ship rather than what a document says.
 - One-colour icons beat a pack, since the two want opposite things. A replacement icon
   the user picked beats both.
 
-There is a throwaway pack in `testpack/` for exercising all of this without the Play
-Store. It maps three apps and ships a back, mask, overlay and scale, so both halves of
-the pipeline are visible at once. It is a separate module and is never part of the
-launcher APK; build and install it with `:testpack:installDebug`.
-
 ### Gestures and the notification shade
 
 The shade itself cannot be restyled. It belongs to SystemUI, and no launcher of any kind

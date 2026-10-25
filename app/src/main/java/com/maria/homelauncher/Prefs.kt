@@ -25,7 +25,7 @@ class Prefs(ctx: Context) {
         dock = cur
     }
 
-    /** Check GitHub for a newer build once a day, on wifi. */
+    /** Watch GitHub for a newer build in the background, on any connection. */
     var autoUpdate: Boolean
         get() = sp.getBoolean("autoUpdate", true)
         set(v) = sp.edit().putBoolean("autoUpdate", v).apply()

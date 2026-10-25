@@ -15,4 +15,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "VantaLauncher"
 include(":app")
-include(":testpack")

@@ -203,4 +203,16 @@ fun packUnplaced(items: List<Placed>, cols: Int, rows: Int): List<Placed> {
     return out
 }
 
+/**
+ * Renumbers pages so there are no empty ones in between. Swiping out to a blank page and
+ * leaving again would otherwise strand a gap that can only be crossed, never used.
+ * Returns the same list when nothing needed moving.
+ */
+fun compactPages(items: List<Placed>): List<Placed> {
+    val used = items.filter { it.placed }.map { it.page }.distinct().sorted()
+    val moved = used.withIndex().associate { (i, page) -> page to i }
+    if (moved.all { (from, to) -> from == to }) return items
+    return items.map { if (it.placed) it.copy(page = moved[it.page] ?: it.page) else it }
+}
+
 fun newFolderId(): String = "f${System.currentTimeMillis().toString(36)}"

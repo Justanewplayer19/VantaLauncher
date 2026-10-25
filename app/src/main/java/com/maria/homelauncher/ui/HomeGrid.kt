@@ -80,6 +80,8 @@ fun HomeGrid(
     onChange: (List<Placed>) -> Unit,
     onOpenFolder: (Item.Folder) -> Unit,
     onItemMenu: (Item) -> Unit,
+    onWallpaper: () -> Unit,
+    onStyle: () -> Unit,
     onPlaceWidget: (AppWidgetProviderInfo, Int, Int, Int, Int, Int) -> Unit,
     onCellSize: (Float, Float) -> Unit,
     canRemoveApps: Boolean,
@@ -474,12 +476,31 @@ fun HomeGrid(
         }
 
         if (editing && !busy && !tray) {
-            Row(
+            Column(
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                EditChip("Add widget", onClick = { tray = true })
-                EditChip("Done", onClick = { onEditing(false) })
+                // which page you are on and how many there are, since an empty page looks
+                // like every other empty page
+                Text(
+                    if (pagerState.currentPage == pageCount - 1 && pageCount > 1)
+                        "New page  ·  drop something here to keep it"
+                    else "Page ${pagerState.currentPage + 1} of $pageCount",
+                    color = LocalInk.current.copy(alpha = 0.85f),
+                    fontSize = 11.sp,
+                    fontFamily = style.fontFamily,
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(style.bgColor).copy(alpha = 0.92f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EditChip("Wallpaper", onClick = onWallpaper)
+                    EditChip("Widgets", onClick = { tray = true })
+                    EditChip("Style", onClick = onStyle)
+                    EditChip("Done", onClick = { onEditing(false) })
+                }
             }
         }
 
@@ -647,7 +668,7 @@ private fun EditChip(text: String, onClick: () -> Unit) {
             .clip(RoundedCornerShape(20.dp))
             .background(Color(style.bgColor).copy(alpha = 0.92f))
             .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
-            .padding(horizontal = 16.dp, vertical = 9.dp)
+            .padding(horizontal = 12.dp, vertical = 9.dp)
     )
 }
 
