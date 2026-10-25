@@ -40,7 +40,9 @@ import com.maria.homelauncher.TARGET_BOTH
 import com.maria.homelauncher.TARGET_HOME
 import com.maria.homelauncher.TARGET_LOCK
 import com.maria.homelauncher.Wallpaper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Internal rather than private: the home screen's own edit bar opens some of these
@@ -97,6 +99,8 @@ internal fun SettingsScreen(
 
     var page by remember { mutableStateOf(startPage ?: Page.Root) }
     var pics by remember { mutableStateOf(prefs.wallpapers) }
+    var picFolders by remember { mutableStateOf(prefs.wallpaperFolders) }
+    var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
     var note by remember { mutableStateOf<String?>(null) }
 
@@ -137,12 +141,32 @@ internal fun SettingsScreen(
         val found = Wallpaper.imagesIn(ctx, tree)
         if (found.isEmpty()) {
             note = "no images directly in that folder"
-        } else {
-            pics = (pics + found).distinct()
-            prefs.wallpapers = pics
-            Wallpaper.schedule(ctx)
-            note = "${found.size} added from folder"
+            return@rememberLauncherForActivityResult
         }
+        // the folder itself is kept, not the files in it, so anything added to it later
+        // joins the rotation without being picked again
+        picFolders = (picFolders + tree.toString()).distinct()
+        prefs.wallpaperFolders = picFolders
+        Wallpaper.schedule(ctx)
+        note = "folder added, ${found.size} image(s) in it now"
+    }
+
+    val livePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ok = runCatching {
+            ctx.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }.isSuccess
+        if (!ok) {
+            note = "could not keep access to that file"
+            return@rememberLauncherForActivityResult
+        }
+        liveBg = uri.toString()
+        prefs.liveBg = liveBg
+        note = "animated background set"
     }
 
     // a font is not a well-known mime type on every device, so the filter is wide and the
@@ -311,12 +335,24 @@ internal fun SettingsScreen(
                 Page.WallpaperPg -> WallpaperPage(
                     prefs = prefs,
                     pics = pics,
+                    folderCount = picFolders.size,
+                    liveBg = liveBg,
                     onAddImages = { picker.launch(arrayOf("image/*")) },
                     onAddFolder = { folderPicker.launch(null) },
                     onPickSingle = { singlePicker.launch(arrayOf("image/*")) },
+                    onPickLive = {
+                        livePicker.launch(arrayOf("image/gif", "image/webp", "video/*"))
+                    },
+                    onClearLive = {
+                        liveBg = ""
+                        prefs.liveBg = ""
+                        note = "animated background removed"
+                    },
                     onClear = {
                         pics = emptyList()
+                        picFolders = emptyList()
                         prefs.wallpapers = pics
+                        prefs.wallpaperFolders = picFolders
                         Wallpaper.schedule(ctx)
                         note = "cleared"
                     },
@@ -409,14 +445,26 @@ private fun RootList(onPick: (Page) -> Unit) {
 private fun WallpaperPage(
     prefs: Prefs,
     pics: List<String>,
+    folderCount: Int,
+    liveBg: String,
     onAddImages: () -> Unit,
     onAddFolder: () -> Unit,
     onPickSingle: () -> Unit,
+    onPickLive: () -> Unit,
+    onClearLive: () -> Unit,
     onClear: () -> Unit,
     onChangeNow: () -> Unit
 ) {
     val ctx = LocalContext.current
     var on by remember { mutableStateOf(prefs.rotateOn) }
+    var loop by remember { mutableStateOf(prefs.liveLoop) }
+
+    // read off the disk rather than from what was saved, so a watched folder reports what
+    // is in it now and not what was in it when it was picked
+    var available by remember { mutableStateOf(-1) }
+    LaunchedEffect(pics, folderCount) {
+        available = withContext(Dispatchers.IO) { Wallpaper.sources(ctx).size }
+    }
     var minutes by remember { mutableStateOf(prefs.rotateMinutes) }
     var target by remember { mutableStateOf(prefs.rotateTarget) }
     var shuffle by remember { mutableStateOf(prefs.shuffle) }
@@ -440,7 +488,11 @@ private fun WallpaperPage(
     }
 
     Text(
-        if (pics.isEmpty()) "No images chosen" else "${pics.size} image(s) chosen",
+        buildString {
+            append(if (pics.isEmpty()) "No images chosen" else "${pics.size} image(s) chosen")
+            if (folderCount > 0) append(", $folderCount folder(s) watched")
+            if (available >= 0) append(", $available in the rotation right now")
+        },
         color = LocalInk.current.copy(alpha = 0.65f),
         fontSize = 13.sp,
         modifier = Modifier.padding(vertical = 6.dp)
@@ -449,9 +501,17 @@ private fun WallpaperPage(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = onAddImages) { Text("Add images") }
         OutlinedButton(onClick = onAddFolder) { Text("Add folder") }
-        if (pics.isNotEmpty()) OutlinedButton(onClick = onClear) { Text("Clear") }
+        // a watched folder is removable too, and it is the only thing in the list when
+        // no single images were ever picked
+        if (pics.isNotEmpty() || folderCount > 0) {
+            OutlinedButton(onClick = onClear) { Text("Clear") }
+        }
     }
-    Hint("Pick single images, or a whole folder from anywhere on the device. A folder adds the images directly inside it, not sub-folders.")
+    Hint(
+        "Pick single images, or a whole folder from anywhere on the device. A folder is " +
+            "re-read every time the wallpaper changes, so pictures you add to it later " +
+            "join in on their own. It reads the images directly inside, not sub-folders."
+    )
 
     Spacer(Modifier.height(16.dp))
     Label("Every")
@@ -480,7 +540,44 @@ private fun WallpaperPage(
     }
 
     Spacer(Modifier.height(12.dp))
-    Button(enabled = pics.isNotEmpty(), onClick = onChangeNow) { Text("Change now") }
+    Button(enabled = pics.isNotEmpty() || folderCount > 0, onClick = onChangeNow) {
+        Text("Change now")
+    }
+
+    Spacer(Modifier.height(26.dp))
+    Label("Animated background")
+    Text(
+        if (liveBg.isBlank()) "None"
+        else "Playing behind the launcher",
+        color = LocalInk.current.copy(alpha = 0.65f),
+        fontSize = 13.sp,
+        modifier = Modifier.padding(vertical = 6.dp)
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onPickLive) {
+            Text(if (liveBg.isBlank()) "Choose a GIF or video" else "Change")
+        }
+        if (liveBg.isNotBlank()) OutlinedButton(onClick = onClearLive) { Text("Remove") }
+    }
+
+    if (liveBg.isNotBlank()) {
+        Spacer(Modifier.height(10.dp))
+        ToggleRow("Repeat", loop) {
+            loop = it
+            prefs.liveLoop = it
+        }
+        Hint(
+            if (loop) "Plays over and over."
+            else "Plays once and holds on the last frame."
+        )
+    }
+
+    Hint(
+        "This is drawn by the launcher rather than set as the system wallpaper, which " +
+            "only takes still images. It pauses whenever another app is in front, and " +
+            "what you see under other apps and on the lock screen is still the picture " +
+            "above."
+    )
 }
 
 @Composable

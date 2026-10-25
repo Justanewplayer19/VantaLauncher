@@ -108,6 +108,25 @@ class Prefs(ctx: Context) {
         get() = list("wallpapers")
         set(v) = putList("wallpapers", v)
 
+    /**
+     * Picked folders, as tree URIs. Stored as folders rather than as the files that were
+     * in them at the time, so an image dropped in later is picked up on the next change
+     * without the folder being chosen again.
+     */
+    var wallpaperFolders: List<String>
+        get() = list("wallpaperFolders")
+        set(v) = putList("wallpaperFolders", v)
+
+    /** A GIF or video drawn behind the launcher. Blank when there is none. */
+    var liveBg: String
+        get() = sp.getString("liveBg", "")!!
+        set(v) = sp.edit().putString("liveBg", v).apply()
+
+    /** False means play once and hold the last frame. */
+    var liveLoop: Boolean
+        get() = sp.getBoolean("liveLoop", true)
+        set(v) = sp.edit().putBoolean("liveLoop", v).apply()
+
     var rotateOn: Boolean
         get() = sp.getBoolean("rotateOn", false)
         set(v) = sp.edit().putBoolean("rotateOn", v).apply()

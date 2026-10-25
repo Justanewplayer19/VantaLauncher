@@ -16,7 +16,12 @@ app, so it stays.
 - Long-press an app -> dock, hide, app info, uninstall
 - **Hidden apps** -- kept out of the grid, only surface when you type in search
 - **Wallpaper rotation** -- pick individual images *or a whole folder* from anywhere on
-  the device, rotate on a timer, home / lock / both, optional shuffle, "Change now"
+  the device, rotate on a timer, home / lock / both, optional shuffle, "Change now". A
+  watched folder is re-read every time, so pictures added to it later join on their own
+- **Animated background** -- a GIF or a video played behind the launcher, set to repeat or
+  to play once and hold on its last frame
+- **Drawer folders** -- group apps inside the drawer, rename them, ungroup them. A search
+  flattens them so an app is never hidden behind one
 - **Single wallpaper** -- set one image immediately without turning rotation on
 - **Free placement** -- the home screen is a grid of cells and anything can go in any one
   of them, gaps included. Long-press an icon to pick it up and drop it where you want.
@@ -102,6 +107,22 @@ single drag implementation move any of them.
 - Hidden apps are excluded from the layout entirely and reachable only through search.
 - Widgets are dragged from edit mode only. Outside it their own views own every touch,
   which is the entire point of a widget.
+
+### Drawer folders
+
+Kept in a store of their own (`DrawerFolders.kt`), not in the home layout. The home screen
+holds items at coordinates; the drawer is a sorted list of everything installed, and a
+folder there is a grouping of that list rather than a thing sitting in a cell. One store
+would have meant one of the two pretending to be the other.
+
+- Membership is `package/activity` strings, the same key everything else uses, so an entry
+  survives a rename, an icon pack change or a reinstall, and simply stops being listed if
+  the app goes away.
+- `drawerCells()` returns folders and loose apps together, sorted by name the way a drawer
+  always is. A folder made by hand stays a folder even with one app in it, because someone
+  put it there on purpose; only an empty one disappears.
+- **A search flattens them.** Looking for an app by name and being told it is inside
+  something is a worse answer than just showing it.
 
 ### Colour picker
 
@@ -446,8 +467,33 @@ there; the page says so rather than pretending otherwise.
   a **persistable** read grant, so they survive reboots.
 - "Add folder" uses `OpenDocumentTree` and enumerates children with `DocumentsContract`
   (no `documentfile` dependency). The tree grant covers the child documents, so those URIs
-  keep working too. It reads images **directly inside** the folder, not sub-folders, and
-  does not re-scan later -- images added to the folder afterwards are not picked up.
+  keep working too. It reads images **directly inside** the folder, not sub-folders.
+- **The folder is stored, not its contents.** `Wallpaper.sources()` expands the saved tree
+  URIs on every change, so a picture dropped into a watched folder is in the rotation
+  without the folder being picked again. The settings page says how many images that comes
+  to right now, which is read off the disk rather than from anything saved.
+- Android refuses a tree grant on some well-known folders, Downloads among them. That is
+  the system's rule, not ours: it answers "Can't use this folder" in its own picker.
+
+### Animated background
+
+A moving background cannot be the system wallpaper. `WallpaperManager` takes a bitmap, so
+the alternatives are a live wallpaper service or a layer the launcher draws itself.
+`ui/LiveBackground.kt` is the second, which keeps it inside our own window and means it
+costs nothing the moment another app is in front.
+
+- GIF and animated WebP go through `ImageDecoder` to an `AnimatedImageDrawable`. That
+  class is API 28 and this app starts at 26, so below that the file still shows as its
+  first frame rather than nothing.
+- `repeatCount` counts repeats *after* the first run, so 0 is "play once" and leaves the
+  last frame up. That is the other half of the Repeat switch.
+- Video uses `MediaPlayer` on a **TextureView**, not a SurfaceView: a SurfaceView punches
+  a hole through the window and this one is deliberately translucent. A non-looping player
+  stops at the end and the texture keeps the last frame, which gets the same behaviour for
+  free. Sound is muted; a background with audio is nobody's idea of a background.
+- A TextureView stretches its content to its own shape, so `cropToFill` scales the larger
+  way and lets the overflow fall off the edges, the way a wallpaper does.
+- Both halves stop on `ON_PAUSE` and start again on `ON_RESUME`.
 - "Choose a wallpaper" applies one image right away via `Wallpaper.setOne`, independent of
   the rotation list, using the same Apply-to target.
 - Rotation runs on WorkManager. **15 minutes is Android's floor** for periodic background
@@ -600,8 +646,11 @@ over the other means uninstalling first, and that erases everything.
 
 ### Updates
 
-The launcher watches its own GitHub releases. A WorkManager job runs once a day, on an
-unmetered network and not on a low battery, reads the latest release, compares its tag
+The launcher watches its own GitHub releases. A WorkManager job runs every three hours on
+any connection, and a throttled check also runs whenever the launcher starts, which is
+what actually makes a release turn up the same hour it lands: a periodic job runs when the
+system feels like it, and the home screen is opened dozens of times a day. It reads the
+latest release, compares its tag
 against the installed `versionName`, and downloads the attached APK in the background.
 Unmetered because this ends in a seven megabyte download nobody agreed to pay for.
 
@@ -665,6 +714,7 @@ app/src/main/java/com/maria/homelauncher/
   MainActivity.kt       activity, HOME wiring, onNewIntent, window blur, style state
   AppRepo.kt            installed apps, icon rendering (shape mask + mono tint), intents
   Layout.kt             placed items, folders, JSON store, install sync, packing
+  DrawerFolders.kt      folders inside the drawer, and the rows it shows
   Prefs.kt              dock, hidden apps, wallpapers, flags
   Style.kt              the whole look as one data class, plus LocalStyle
   Wallpaper.kt          rotation worker, folder enumeration, apply
@@ -686,6 +736,7 @@ app/src/main/java/com/maria/homelauncher/
   ui/Appearance.kt      the per-page control bodies and shared widgets
   ui/ColorPicker.kt     hue/sat/bright/alpha bars, hex and RGBA entry
   ui/Preview.kt         live mock of home and drawer
+  ui/LiveBackground.kt  the GIF and video layer behind everything
   ui/Onboarding.kt      six-screen first-run intro
   ui/WelcomeFade.kt     the fade from the last intro page into home
   ui/FontPage.kt        the font picker: provider dots, search, keep

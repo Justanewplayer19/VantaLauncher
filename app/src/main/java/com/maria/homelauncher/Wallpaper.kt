@@ -24,7 +24,7 @@ object Wallpaper {
      */
     suspend fun advance(ctx: Context): Boolean = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
-        val uris = prefs.wallpapers
+        val uris = sources(ctx)
         if (uris.isEmpty()) return@withContext false
 
         // Walk the list from the cursor so a dead URI falls through to the next one
@@ -38,6 +38,18 @@ object Wallpaper {
             }
         }
         false
+    }
+
+    /**
+     * Everything the rotation can currently choose from: the individually picked images,
+     * plus whatever is in the picked folders *right now*. Reading the folders on every
+     * change is the point: a picture added to one afterwards joins the rotation on its
+     * own, where a list captured at pick time would have gone stale.
+     */
+    fun sources(ctx: Context): List<String> {
+        val prefs = Prefs(ctx)
+        val fromFolders = prefs.wallpaperFolders.flatMap { imagesIn(ctx, Uri.parse(it)) }
+        return (prefs.wallpapers + fromFolders).distinct()
     }
 
     /** Applies one image immediately, outside the rotation. */
@@ -102,7 +114,7 @@ object Wallpaper {
         val prefs = Prefs(ctx)
         val wm = WorkManager.getInstance(ctx)
 
-        if (!prefs.rotateOn || prefs.wallpapers.isEmpty()) {
+        if (!prefs.rotateOn || sources(ctx).isEmpty()) {
             wm.cancelUniqueWork(WORK_NAME)
             return
         }

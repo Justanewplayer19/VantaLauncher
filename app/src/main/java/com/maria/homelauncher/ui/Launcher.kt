@@ -129,12 +129,27 @@ fun LauncherRoot(
     var editFor by remember { mutableStateOf<AppEntry?>(null) }
     var editingHome by remember { mutableStateOf(false) }
     var cellDp by remember { mutableStateOf(72f to 96f) }
+    var liveBg by remember { mutableStateOf(prefs.liveBg) }
+    var liveLoop by remember { mutableStateOf(prefs.liveLoop) }
     var pendingSpot by remember { mutableStateOf<Placed?>(null) }
     val scope = rememberCoroutineScope()
 
     fun commit(next: List<Placed>) {
         layout = next
         layoutStore.save(next)
+    }
+
+    /**
+     * Back and the close button both land here. They used to differ: back set the flag
+     * and nothing else, so anything settings had written straight to prefs was only
+     * noticed if you left through the button.
+     */
+    fun closeSettings() {
+        settingsOpen = false
+        settingsAt = null
+        hidden = prefs.hidden
+        liveBg = prefs.liveBg
+        liveLoop = prefs.liveLoop
     }
 
     fun commitFolders(next: List<DrawerFolder>) {
@@ -209,7 +224,7 @@ fun LauncherRoot(
         when {
             // the intro owns the screen; back should not drop you behind it
             intro -> Unit
-            settingsOpen -> settingsOpen = false
+            settingsOpen -> closeSettings()
             openFolder != null -> openFolder = null
             drawerFolder != null -> drawerFolder = null
             drawerOpen -> setDrawerOpen(false)
@@ -227,6 +242,10 @@ fun LauncherRoot(
 
     androidx.compose.runtime.CompositionLocalProvider(LocalBadges provides badges) {
     Box(Modifier.fillMaxSize()) {
+        // behaves like the wallpaper: underneath everything, including the panels, which
+        // are translucent over it the same way they are over a still image
+        LiveBackground(liveBg, liveLoop, Modifier.fillMaxSize())
+
         if (homeAlpha > 0f) {
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {
                 val grid = @Composable { modifier: Modifier ->
@@ -459,7 +478,7 @@ fun LauncherRoot(
                 styleStore = styleStore,
                 onImported = onImported,
                 startPage = settingsAt,
-                onClose = { settingsOpen = false; settingsAt = null; hidden = prefs.hidden }
+                onClose = { closeSettings() }
             )
         }
 
