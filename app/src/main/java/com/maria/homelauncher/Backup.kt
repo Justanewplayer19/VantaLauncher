@@ -41,7 +41,7 @@ object Backup {
     private val STORES = listOf("launcher", "style", "overrides", "layout", "widgets")
 
     /** Folders carried whole, relative to filesDir. */
-    private val FOLDERS = listOf("fonts", "icons")
+    private val FOLDERS = listOf("fonts", "icons", "audio")
 
     /** Not a setting: the undo snapshot is this phone's scratch space, not part of a setup. */
     private val SKIP_STORES = listOf("style_undo")

@@ -24,8 +24,11 @@ app, so it stays.
   comes back on, in order or at random, drawn from the same images and folders. The lock
   screen only: the home wallpaper is left where it is
 - **Home screen sound** -- an audio file played while the home screen is in front, with
-  repeat and a volume. It mixes under whatever is already playing rather than pausing it,
-  and stops the moment another app comes forward
+  repeat and a volume. The file is copied into the app rather than played from where it
+  sits, so a withdrawn permission or a cloud-backed provider cannot silence it later, and
+  a Test button plays it on the spot and says why if it will not play. It mixes under
+  whatever is already playing rather than pausing it, and stops the moment another app
+  comes forward
 - **Drawer folders** -- group apps inside the drawer, rename them, ungroup them. A search
   flattens them so an app is never hidden behind one
 - **Single wallpaper** -- set one image immediately without turning rotation on

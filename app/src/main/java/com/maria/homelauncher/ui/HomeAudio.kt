@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.maria.homelauncher.HomeTrack
 
 /**
  * A track played while the home screen is the thing in front. MP3, OGG, WAV, M4A, FLAC,
@@ -31,11 +32,14 @@ fun HomeAudio(uri: String, loop: Boolean, volume: Int) {
     if (uri.isBlank()) return
     val ctx = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // our own copy where there is one, and the picked URI only for a track chosen by a
+    // version that stored it that way
+    val local = remember(uri) { HomeTrack.file(ctx, uri) }
     val parsed = remember(uri) { Uri.parse(uri) }
     val player = remember(uri) { MediaPlayer() }
     var ready by remember(uri) { mutableStateOf(false) }
 
-    DisposableEffect(player, parsed) {
+    DisposableEffect(player, parsed, local) {
         runCatching {
             // has to be set before prepare, and media rather than notification so the
             // volume key the user reaches for is the one that moves it
@@ -45,7 +49,8 @@ fun HomeAudio(uri: String, loop: Boolean, volume: Int) {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             )
-            player.setDataSource(ctx, parsed)
+            if (local != null) player.setDataSource(local.absolutePath)
+            else player.setDataSource(ctx, parsed)
             player.isLooping = loop
             player.setOnPreparedListener {
                 ready = true

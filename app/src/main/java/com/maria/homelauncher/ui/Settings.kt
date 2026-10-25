@@ -39,6 +39,7 @@ import com.maria.homelauncher.Style
 import com.maria.homelauncher.TARGET_BOTH
 import com.maria.homelauncher.TARGET_HOME
 import com.maria.homelauncher.TARGET_LOCK
+import com.maria.homelauncher.HomeTrack
 import com.maria.homelauncher.Wallpaper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -171,22 +172,23 @@ internal fun SettingsScreen(
         note = "animated background set"
     }
 
+    // copied in rather than played from where it sits: see HomeTrack for why a picked
+    // URI is not something to rely on months later
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val ok = runCatching {
-            ctx.contentResolver.takePersistableUriPermission(
-                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        }.isSuccess
-        if (!ok) {
-            note = "could not keep access to that file"
-            return@rememberLauncherForActivityResult
+        note = "copying that file in..."
+        scope.launch {
+            val stored = withContext(Dispatchers.IO) { HomeTrack.import(ctx, uri) }
+            if (stored == null) {
+                note = "that file could not be read"
+            } else {
+                audio = stored
+                prefs.homeAudio = stored
+                note = "track set"
+            }
         }
-        audio = uri.toString()
-        prefs.homeAudio = audio
-        note = "track set"
     }
 
     // a font is not a well-known mime type on every device, so the filter is wide and the
@@ -388,9 +390,11 @@ internal fun SettingsScreen(
                     prefs = prefs,
                     audio = audio,
                     onPick = { audioPicker.launch(arrayOf("audio/*")) },
+                    onNote = { note = it },
                     onClear = {
                         audio = ""
                         prefs.homeAudio = ""
+                        HomeTrack.clear(ctx)
                         note = "track removed"
                     }
                 )
@@ -641,21 +645,16 @@ private fun SoundPage(
     prefs: Prefs,
     audio: String,
     onPick: () -> Unit,
+    onNote: (String) -> Unit,
     onClear: () -> Unit
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var loop by remember { mutableStateOf(prefs.audioLoop) }
     var volume by remember { mutableStateOf(prefs.audioVolume) }
+    var testing by remember { mutableStateOf(false) }
 
-    val name = remember(audio) {
-        if (audio.isBlank()) "" else runCatching {
-            ctx.contentResolver.query(
-                android.net.Uri.parse(audio),
-                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                null, null, null
-            )?.use { if (it.moveToFirst()) it.getString(0) else null }
-        }.getOrNull().orEmpty()
-    }
+    val name = remember(audio) { HomeTrack.label(ctx, audio) }
 
     Text(
         "A track that plays while the home screen is in front, and stops the moment you " +
@@ -680,7 +679,27 @@ private fun SoundPage(
         Button(onClick = onPick) {
             Text(if (audio.isBlank()) "Choose a file" else "Change")
         }
-        if (audio.isNotBlank()) OutlinedButton(onClick = onClear) { Text("Remove") }
+        if (audio.isNotBlank()) {
+            OutlinedButton(
+                enabled = !testing,
+                onClick = {
+                    testing = true
+                    onNote("playing it now...")
+                    scope.launch {
+                        val wrong = HomeTrack.probe(ctx, audio, volume)
+                        testing = false
+                        onNote(wrong?.let { "it will not play: $it" } ?: "that played fine")
+                    }
+                }
+            ) { Text("Test") }
+            OutlinedButton(onClick = onClear) { Text("Remove") }
+        }
+    }
+    if (audio.isNotBlank()) {
+        Hint(
+            "Test plays it for a few seconds right here. If you hear it here but not on " +
+                "the home screen, say so and I will know where to look."
+        )
     }
 
     if (audio.isNotBlank()) {

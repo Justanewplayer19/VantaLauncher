@@ -55,6 +55,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.Item
 import com.maria.homelauncher.LayoutStore
@@ -155,15 +158,19 @@ fun LauncherRoot(
      * and nothing else, so anything settings had written straight to prefs was only
      * noticed if you left through the button.
      */
-    fun closeSettings() {
-        settingsOpen = false
-        settingsAt = null
+    fun reread() {
         hidden = prefs.hidden
         liveBg = prefs.liveBg
         liveLoop = prefs.liveLoop
         audio = prefs.homeAudio
         audioLoop = prefs.audioLoop
         audioVolume = prefs.audioVolume
+    }
+
+    fun closeSettings() {
+        settingsOpen = false
+        settingsAt = null
+        reread()
     }
 
     fun commitFolders(next: List<DrawerFolder>) {
@@ -203,9 +210,23 @@ fun LauncherRoot(
         }
     }
 
+    // Settings writes some of these straight to prefs, and there is more than one way
+    // out of it: the close button, back, and the home key, which drops the panel from
+    // somewhere else entirely. Re-reading on every resume covers all three and costs a
+    // handful of preference reads.
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) reread()
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+
     // home press: drop every panel this composable owns, not just the drawer
     LaunchedEffect(resetPanels) {
         if (resetPanels > 0) {
+            reread()
             settingsOpen = false
             openFolder = null
             drawerFolder = null
