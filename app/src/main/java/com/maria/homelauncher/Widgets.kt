@@ -43,7 +43,14 @@ class LauncherWidgets(private val act: ComponentActivity) {
     /** The id waiting on a bind or configure result; -1 when nothing is in flight. */
     private var pending = -1
 
-    fun start() { runCatching { host.startListening() } }
+    fun start() {
+        runCatching { host.startListening() }
+        // A restored backup carries widget ids, and a reinstall releases every id the
+        // host had handed out, so a restore onto a fresh install can name widgets that
+        // no longer exist. Pruning here rather than only on the widgets page means a
+        // dead frame never reaches the home screen in the first place.
+        runCatching { prune() }
+    }
     fun stop() { runCatching { host.stopListening() } }
 
     fun providers(): List<AppWidgetProviderInfo> {
