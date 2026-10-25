@@ -22,6 +22,14 @@ sealed class Item {
     data class Widget(val appWidgetId: Int) : Item() {
         override val key get() = "w:$appWidgetId"
     }
+
+    /**
+     * The clock and date. Only ever one, which is why the key is constant: it used to be
+     * a fixed header that owned the top of the screen whether you wanted it there or not.
+     */
+    data object Clock : Item() {
+        override val key get() = "k:clock"
+    }
 }
 
 /**
@@ -75,6 +83,7 @@ class LayoutStore(ctx: Context) {
                     Item.Folder(o.getString("id"), o.getString("n"), list)
                 }
                 "w" -> Item.Widget(o.getInt("id"))
+                "k" -> Item.Clock
                 else -> null
             }
             if (item == null) continue
@@ -98,6 +107,7 @@ class LayoutStore(ctx: Context) {
             val o = when (val item = p.item) {
                 is Item.App -> JSONObject().put("t", "a").put("p", item.pkg).put("c", item.activity)
                 is Item.Widget -> JSONObject().put("t", "w").put("id", item.appWidgetId)
+                is Item.Clock -> JSONObject().put("t", "k")
                 is Item.Folder -> JSONObject()
                     .put("t", "f")
                     .put("id", item.id)
@@ -138,7 +148,7 @@ fun syncLayout(
 
     for (p in saved) {
         when (val item = p.item) {
-            is Item.Widget -> out += p
+            is Item.Widget, is Item.Clock -> out += p
             is Item.App -> {
                 val k = keyOf(item)
                 if (live.containsKey(k) && seen.add(k)) out += p
@@ -203,16 +213,8 @@ fun packUnplaced(items: List<Placed>, cols: Int, rows: Int): List<Placed> {
     return out
 }
 
-/**
- * Renumbers pages so there are no empty ones in between. Swiping out to a blank page and
- * leaving again would otherwise strand a gap that can only be crossed, never used.
- * Returns the same list when nothing needed moving.
- */
-fun compactPages(items: List<Placed>): List<Placed> {
-    val used = items.filter { it.placed }.map { it.page }.distinct().sorted()
-    val moved = used.withIndex().associate { (i, page) -> page to i }
-    if (moved.all { (from, to) -> from == to }) return items
-    return items.map { if (it.placed) it.copy(page = moved[it.page] ?: it.page) else it }
-}
+/** Moves everything above [page] down one, for when that page is taken away. */
+fun dropPage(items: List<Placed>, page: Int): List<Placed> =
+    items.map { if (it.placed && it.page > page) it.copy(page = it.page - 1) else it }
 
 fun newFolderId(): String = "f${System.currentTimeMillis().toString(36)}"

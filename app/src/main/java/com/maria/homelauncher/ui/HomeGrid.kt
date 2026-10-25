@@ -53,6 +53,9 @@ import com.maria.homelauncher.fitsHere
 import com.maria.homelauncher.newFolderId
 import com.maria.homelauncher.packUnplaced
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -82,6 +85,9 @@ fun HomeGrid(
     onItemMenu: (Item) -> Unit,
     onWallpaper: () -> Unit,
     onStyle: () -> Unit,
+    pages: Int,
+    /** New page count, and the page to take away first, or -1 when none goes. */
+    onPages: (Int, Int) -> Unit,
     onPlaceWidget: (AppWidgetProviderInfo, Int, Int, Int, Int, Int) -> Unit,
     onCellSize: (Float, Float) -> Unit,
     canRemoveApps: Boolean,
@@ -144,9 +150,12 @@ fun HomeGrid(
         val dragged = live.firstOrNull { it.item.key == dragKey }
         val busy = dragKey != null || sizeKey != null || trayInfo != null
 
-        // a spare page on the end while rearranging, so an item can be carried to one
-        // that does not exist yet
-        val pageCount = lastPage + 1 + if (busy || editing || tray) 1 else 0
+        // Pages are kept on purpose now, empty or not, so the count is whichever is
+        // larger: what was asked for, or what is needed to hold the furthest item. The
+        // spare one only appears mid-drag, so something can be carried to a page that
+        // does not exist yet.
+        val kept = maxOf(pages, lastPage + 1)
+        val pageCount = kept + if (busy) 1 else 0
         val pagerState = rememberPagerState(pageCount = { pageCount })
 
         LaunchedEffect(edgeDir, pagerState.currentPage) {
@@ -335,6 +344,37 @@ fun HomeGrid(
                             }
 
                             when (val item = p.item) {
+                                is Item.Clock -> ClockCell(
+                                    editing = editing,
+                                    onLift = lift,
+                                    onCarry = carry,
+                                    onLand = { land(true) },
+                                    onCancel = { dragKey = null; folderOnto = null; edgeDir = 0 },
+                                    onResizeStart = {
+                                        sizeKey = p.item.key
+                                        sizeW = p.w
+                                        sizeH = p.h
+                                        sizeCorner = Offset((p.col + p.w) * cellW, (p.row + p.h) * cellH)
+                                    },
+                                    onResize = { delta ->
+                                        sizeCorner += delta
+                                        val nw = ((sizeCorner.x - p.col * cellW) / cellW)
+                                            .roundToInt().coerceIn(1, cols - p.col)
+                                        val nh = ((sizeCorner.y - p.row * cellH) / cellH)
+                                            .roundToInt().coerceIn(1, rows - p.row)
+                                        if (fitsHere(live, p.copy(w = nw, h = nh), cols, rows, p.item)) {
+                                            sizeW = nw
+                                            sizeH = nh
+                                        }
+                                    },
+                                    onResizeEnd = {
+                                        val k = sizeKey
+                                        sizeKey = null
+                                        if (k != null) resize(k, sizeW, sizeH)
+                                    },
+                                    onRemove = { remove(p) }
+                                )
+
                                 is Item.Widget -> WidgetCell(
                                     widgets = widgets,
                                     item = item,
@@ -441,6 +481,7 @@ fun HomeGrid(
                 contentAlignment = Alignment.Center
             ) {
                 when (val item = p.item) {
+                    is Item.Clock -> HomeClock()
                     is Item.Widget -> Box(
                         Modifier
                             .fillMaxSize()
@@ -482,19 +523,31 @@ fun HomeGrid(
             ) {
                 // which page you are on and how many there are, since an empty page looks
                 // like every other empty page
-                Text(
-                    if (pagerState.currentPage == pageCount - 1 && pageCount > 1)
-                        "New page  ·  drop something here to keep it"
-                    else "Page ${pagerState.currentPage + 1} of $pageCount",
-                    color = LocalInk.current.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
-                    fontFamily = style.fontFamily,
-                    modifier = Modifier
-                        .padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(style.bgColor).copy(alpha = 0.92f))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                val here = pagerState.currentPage
+                val emptyHere = live.none { it.page == here }
+
+                Row(
+                    Modifier.padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // a page with nothing on it can go; one holding something cannot,
+                    // since that would be a delete wearing a different label
+                    if (emptyHere && kept > 1) {
+                        EditChip("− Page") { onPages(kept - 1, here) }
+                    }
+                    Text(
+                        "Page ${here + 1} of $kept",
+                        color = LocalInk.current.copy(alpha = 0.85f),
+                        fontSize = 11.sp,
+                        fontFamily = style.fontFamily,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(style.bgColor).copy(alpha = 0.92f))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                    if (kept < 16) EditChip("+ Page") { onPages(kept + 1, -1) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     EditChip("Wallpaper", onClick = onWallpaper)
                     EditChip("Widgets", onClick = { tray = true })
@@ -687,6 +740,125 @@ private fun RemoveBadge(modifier: Modifier = Modifier, onClick: () -> Unit) {
 }
 
 /**
+ * The time and the date, as they appear on the home screen. Which of the two show, how
+ * big they are and in what font all come from [LocalStyle]; where they sit comes from the
+ * grid, like everything else.
+ */
+@Composable
+internal fun HomeClock() {
+    val style = LocalStyle.current
+    if (!style.showClock && !style.showDate) return
+
+    var now by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Date()
+            delay(10_000)
+        }
+    }
+
+    val pattern = if (style.clock24) "H:mm" else "h:mm"
+    val time = remember(now, pattern) {
+        SimpleDateFormat(pattern, Locale.getDefault()).format(now)
+    }
+    val date = remember(now) { SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(now) }
+
+    // unbounded, so a clock too tall for the cells it was given spills over them rather
+    // than squeezing the date down to a sliver
+    Column(
+        modifier = Modifier.wrapContentHeight(
+            align = Alignment.CenterVertically,
+            unbounded = true
+        ),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (style.showClock) {
+            Text(
+                time,
+                color = LocalInk.current,
+                fontSize = style.clockSp.sp,
+                fontFamily = style.fontFamily,
+                maxLines = 1,
+                style = TextStyle(shadow = overWallpaper)
+            )
+        }
+        if (style.showDate) {
+            Text(
+                date,
+                color = LocalInk.current.copy(alpha = 0.85f),
+                fontSize = style.dateSp.sp,
+                fontFamily = style.fontFamily,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(shadow = overWallpaper)
+            )
+        }
+    }
+}
+
+/**
+ * The clock, in whatever cells it was put in. It ignores touches while the surface is
+ * idle, so a long press on it reaches the wallpaper underneath and turns on edit mode,
+ * which is where it can then be moved, resized or taken off altogether.
+ */
+@Composable
+private fun ClockCell(
+    editing: Boolean,
+    onLift: (Offset) -> Unit,
+    onCarry: (Offset) -> Unit,
+    onLand: () -> Unit,
+    onCancel: () -> Unit,
+    onResizeStart: () -> Unit,
+    onResize: (Offset) -> Unit,
+    onResizeEnd: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        HomeClock()
+
+        if (editing) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(LocalInk.current.copy(alpha = 0.12f))
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { onLift(it) },
+                            onDrag = { change, delta -> change.consume(); onCarry(delta) },
+                            onDragEnd = onLand,
+                            onDragCancel = onCancel
+                        )
+                    }
+            )
+
+            RemoveBadge(Modifier.align(Alignment.TopEnd).padding(4.dp), onClick = onRemove)
+
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { onResizeStart() },
+                            onDrag = { change, delta -> change.consume(); onResize(delta) },
+                            onDragEnd = onResizeEnd,
+                            onDragCancel = onResizeEnd
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("⇲", color = Color.White, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+/**
  * One widget in its cell. Its own view gets every touch while the surface is idle, which
  * is what makes a widget worth having; in edit mode a sheet goes over the top so the
  * drag and the corner handle are what the finger reaches instead.
@@ -785,13 +957,13 @@ private fun mergeIntoFolder(items: List<Placed>, fromKey: String, ontoKey: Strin
     val draggedApps: List<Item.App> = when (val d = from.item) {
         is Item.App -> listOf(d)
         is Item.Folder -> d.apps
-        is Item.Widget -> return items
+        else -> return items
     }
 
     val merged: Item.Folder = when (val t = onto.item) {
         is Item.Folder -> t.copy(apps = t.apps + draggedApps)
         is Item.App -> Item.Folder(newFolderId(), "Folder", listOf(t) + draggedApps)
-        is Item.Widget -> return items
+        else -> return items
     }
 
     return items.mapNotNull {
@@ -840,7 +1012,7 @@ fun ItemTile(
                     )
                 }
                 is Item.Folder -> FolderIcon(item, iconOf)
-                is Item.Widget -> Unit
+                else -> Unit
             }
 
             if (item is Item.App && style.badges && item.pkg in LocalBadges.current) {
@@ -854,7 +1026,7 @@ fun ItemTile(
                 when (item) {
                     is Item.App -> iconOf(item)?.label ?: ""
                     is Item.Folder -> item.name
-                    is Item.Widget -> ""
+                    else -> ""
                 },
                 color = LocalInk.current.copy(alpha = 0.95f),
                 fontSize = style.labelSp.sp,

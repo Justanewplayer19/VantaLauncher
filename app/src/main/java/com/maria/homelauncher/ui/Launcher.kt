@@ -63,7 +63,7 @@ import com.maria.homelauncher.DrawerCell
 import com.maria.homelauncher.DrawerFolder
 import com.maria.homelauncher.DrawerStore
 import com.maria.homelauncher.addToFolder
-import com.maria.homelauncher.compactPages
+import com.maria.homelauncher.dropPage
 import com.maria.homelauncher.drawerCells
 import com.maria.homelauncher.newDrawerFolderId
 import com.maria.homelauncher.removeFromFolders
@@ -129,6 +129,7 @@ fun LauncherRoot(
     var editFor by remember { mutableStateOf<AppEntry?>(null) }
     var editingHome by remember { mutableStateOf(false) }
     var cellDp by remember { mutableStateOf(72f to 96f) }
+    var homePages by remember { mutableStateOf(prefs.homePages) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var liveLoop by remember { mutableStateOf(prefs.liveLoop) }
     var pendingSpot by remember { mutableStateOf<Placed?>(null) }
@@ -137,6 +138,13 @@ fun LauncherRoot(
     fun commit(next: List<Placed>) {
         layout = next
         layoutStore.save(next)
+        // dropping something on the spare page at the end is how a page gets added
+        // without asking for one, so the count has to follow
+        val needed = (next.maxOfOrNull { if (it.placed) it.page + 1 else 0 } ?: 1).coerceAtLeast(1)
+        if (needed > prefs.homePages) {
+            prefs.homePages = needed
+            homePages = needed
+        }
     }
 
     /**
@@ -254,21 +262,19 @@ fun LauncherRoot(
                         iconOf = iconOf,
                         widgets = widgets,
                         editing = editingHome,
-                        onEditing = { on ->
-                            editingHome = on
-                            // a page swiped out to and then left behind would otherwise
-                            // stay as a gap in the numbering
-                            if (!on) {
-                                val tidy = compactPages(layout)
-                                if (tidy !== layout) commit(tidy)
-                            }
-                        },
+                        onEditing = { editingHome = it },
                         onLaunch = { a -> iconOf(a)?.let(repo::launch) },
                         onChange = { commit(it) },
                         onOpenFolder = { openFolder = it.id },
                         onItemMenu = { itemMenu = it },
                         onWallpaper = { settingsAt = Page.WallpaperPg; settingsOpen = true },
                         onStyle = { settingsAt = Page.ThemesPg; settingsOpen = true },
+                        pages = homePages,
+                        onPages = { count, drop ->
+                            if (drop >= 0) commit(dropPage(layout, drop))
+                            homePages = count
+                            prefs.homePages = count
+                        },
                         onPlaceWidget = { info, page, col, row, w, h ->
                             pendingSpot = Placed(Item.Widget(-1), page, col, row, w, h)
                             widgets.add(info)
@@ -666,12 +672,10 @@ private fun HomeScreen(
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(56.dp))
-        Clock()
-
-        // Apps and widgets, wherever they were put. Empty until something is dragged
-        // here, which is the point: this mode starts as a clean wallpaper.
-        grid(Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp, bottom = 4.dp))
+        // Apps, widgets and the clock, wherever they were put. The clock used to be a
+        // fixed header here, which meant it owned the top of the screen whether that was
+        // wanted or not; it is an item on the grid now, like everything else.
+        grid(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp, bottom = 4.dp))
 
         val byPkg = apps.associateBy { it.packageName }
         val dockApps = dock.mapNotNull { byPkg[it] }.take(style.dockMax)
@@ -703,42 +707,6 @@ private fun HomeScreen(
             style = TextStyle(shadow = overWallpaper)
         )
         Spacer(Modifier.height(18.dp))
-    }
-}
-
-@Composable
-private fun Clock() {
-    val style = LocalStyle.current
-    var now by remember { mutableStateOf(Date()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = Date()
-            delay(10_000)
-        }
-    }
-    val pattern = if (style.clock24) "H:mm" else "h:mm"
-    val time = remember(now, pattern) {
-        SimpleDateFormat(pattern, Locale.getDefault()).format(now)
-    }
-    val date = remember(now) { SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(now) }
-
-    if (style.showClock) {
-        Text(
-            time,
-            color = LocalInk.current,
-            fontSize = style.clockSp.sp,
-            fontFamily = style.fontFamily,
-            style = TextStyle(shadow = overWallpaper)
-        )
-    }
-    if (style.showDate) {
-        Text(
-            date,
-            color = LocalInk.current.copy(alpha = 0.85f),
-            fontSize = style.dateSp.sp,
-            fontFamily = style.fontFamily,
-            style = TextStyle(shadow = overWallpaper)
-        )
     }
 }
 
@@ -1119,44 +1087,9 @@ private fun SingleSurface(
             .systemBarsPadding()
             .displayCutoutPadding()
     ) {
-        CompactClock()
         grid(Modifier.weight(1f))
         Spacer(Modifier.height(14.dp))
     }
-}
-
-@Composable
-private fun CompactClock() {
-    val style = LocalStyle.current
-    var now by remember { mutableStateOf(Date()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = Date()
-            delay(10_000)
-        }
-    }
-    val pattern = remember(style.clock24, style.showClock, style.showDate) {
-        val t = if (style.clock24) "H:mm" else "h:mm"
-        when {
-            style.showClock && style.showDate -> "$t  ·  EEE, MMM d"
-            style.showClock -> t
-            style.showDate -> "EEE, MMM d"
-            else -> ""
-        }
-    }
-    if (pattern.isEmpty()) return
-    val text = remember(now, pattern) {
-        SimpleDateFormat(pattern, Locale.getDefault()).format(now)
-    }
-    Text(
-        text,
-        color = LocalInk.current.copy(alpha = 0.85f),
-        fontSize = style.dateSp.sp,
-        fontFamily = style.fontFamily,
-        modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
-        textAlign = TextAlign.Center,
-        style = TextStyle(shadow = overWallpaper)
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1183,6 +1116,7 @@ private fun ItemMenuSheet(
                     is Item.App -> iconOf(item)?.label ?: item.pkg
                     is Item.Folder -> item.name
                     is Item.Widget -> "Widget"
+                    is Item.Clock -> "Clock"
                 },
                 color = LocalInk.current,
                 fontFamily = style.familyFor((item as? Item.App)?.let(iconOf)),
@@ -1202,6 +1136,7 @@ private fun ItemMenuSheet(
                     if (canRemove) SheetRow("Remove from home") { onRemoveFromHome(item) }
                 }
                 is Item.Widget -> Unit
+                is Item.Clock -> SheetRow("Remove from home") { onRemoveFromHome(item) }
             }
         }
     }
@@ -1227,7 +1162,11 @@ private fun openLayout(
     columns: Int
 ): List<Placed> {
     val saved = store.load()
-    if (prefs.gridMigrated) return saved
+    if (prefs.gridMigrated) {
+        val withIt = withClock(saved, prefs, columns)
+        if (withIt !== saved) store.save(withIt)
+        return withIt
+    }
 
     var next = if (single) saved else saved.filter { it.item is Item.Widget }
     val carried = widgets.stacked()
@@ -1238,9 +1177,30 @@ private fun openLayout(
         }
     }
     widgets.forgetStacked()
+    next = withClock(next, prefs, columns)
     store.save(next)
     prefs.gridMigrated = true
     return next
+}
+
+/**
+ * Puts the clock on the grid the first time this version runs. It was a fixed header
+ * before, so a layout from then has no item for it and the screen would come up without
+ * one. The top row is where it used to sit, and is the spot it gets if nothing else has
+ * claimed it; otherwise it goes in unplaced and the grid finds it room.
+ */
+private fun withClock(items: List<Placed>, prefs: Prefs, columns: Int): List<Placed> {
+    if (prefs.clockOnGrid || items.any { it.item is Item.Clock }) return items
+    prefs.clockOnGrid = true
+    // two rows, because a clock at any reasonable size is taller than one cell and the
+    // date would end up as a sliver underneath it
+    fun rowFree(r: Int) = items.none { it.placed && it.page == 0 && it.covers(0, r) }
+    val clock = when {
+        rowFree(0) && rowFree(1) -> Placed(Item.Clock, page = 0, col = 0, row = 0, w = columns, h = 2)
+        rowFree(0) -> Placed(Item.Clock, page = 0, col = 0, row = 0, w = columns, h = 1)
+        else -> Placed(Item.Clock, w = columns, h = 2)
+    }
+    return listOf(clock) + items
 }
 
 /**

@@ -67,6 +67,20 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("gridV2", false)
         set(v) = sp.edit().putBoolean("gridV2", v).apply()
 
+    /**
+     * How many home pages to keep, including empty ones. A page with nothing on it is
+     * something to ask for rather than a mistake to tidy away: it is how you get a look
+     * at the wallpaper with nothing in front of it.
+     */
+    var homePages: Int
+        get() = sp.getInt("homePages", 1).coerceIn(1, 16)
+        set(v) = sp.edit().putInt("homePages", v.coerceIn(1, 16)).apply()
+
+    /** False until the fixed clock header was turned into an item on the grid. */
+    var clockOnGrid: Boolean
+        get() = sp.getBoolean("clockOnGrid2", false)
+        set(v) = sp.edit().putBoolean("clockOnGrid2", v).apply()
+
     /** Packages kept out of the grid; they only surface when the search box has text. */
     var hidden: Set<String>
         get() = list("hidden").toSet()

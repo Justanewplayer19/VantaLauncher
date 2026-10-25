@@ -31,7 +31,12 @@ app, so it stays.
 - **App folders** -- drop one icon squarely on another to make one. Folders open as an
   overlay with an editable name, and a long-press inside moves an app back out.
 - **Edit mode** -- hold bare wallpaper. The cell lattice appears, widgets grow a drag
-  sheet, a resize corner and a remove badge, and a bar offers "Add widget" and "Done".
+  sheet, a resize corner and a remove badge, and a bar offers Wallpaper, Widgets, Style
+  and Done, with a stepper for adding and removing pages.
+- **Pages you keep** -- add one and leave it empty if all you want is a look at the
+  wallpaper with nothing in front of it. Pages are kept until you remove them.
+- **The clock is an item** -- it sits in grid cells like everything else, so it can be
+  dragged anywhere, resized, or taken off the home screen entirely.
 - **Drawer browse style** -- Scroll (one long vertical list) or Pages (swipe left/right,
   with page dots). Set in settings.
 - **Search bar position** -- Top or Bottom, centred either way. At the bottom it lifts above
@@ -96,6 +101,16 @@ single drag implementation move any of them.
   what was put there and nothing else.
 - **Nothing reflows.** A gap is a gap. Dropping on a taken cell is refused and the outline
   turns red rather than shoving the occupant aside.
+- **The clock is `Item.Clock`,** one per layout and keyed as such. It used to be a fixed
+  header that owned the top of the screen whether that was wanted or not. It ignores
+  touches while the surface is idle, so a long press on it reaches the wallpaper
+  underneath and turns on edit mode, which is where it can be moved. Its content still
+  comes from the clock settings; where it sits comes from the grid.
+- **An empty page is something to ask for, not a mistake to tidy away.** The page count is
+  stored (`Prefs.homePages`) and the grid shows whichever is larger: that, or enough to
+  hold the furthest item. Dropping something on the spare page at the end raises the count
+  on its own. An earlier version compacted empty pages away on leaving edit mode, which
+  made a deliberately blank page impossible to keep.
 - **Drag does not live-move.** The dragged tile floats under the finger and the target
   cells are outlined; the move commits on release, which is what keeps "drop onto" from
   being ambiguous.
@@ -474,6 +489,13 @@ there; the page says so rather than pretending otherwise.
   to right now, which is read off the disk rather than from anything saved.
 - Android refuses a tree grant on some well-known folders, Downloads among them. That is
   the system's rule, not ours: it answers "Can't use this folder" in its own picker.
+- **A live wallpaper is drawn over the static one.** Setting a picture underneath one
+  succeeds and changes nothing you can see, which looks exactly like the phone ignoring
+  the app. Phones that ship with a moving wallpaper, Samsung among them, land here. So
+  `wallpaperInfo != null` means clearing first.
+- The image is decoded to a bitmap and handed over with `setBitmap` rather than as a
+  stream. Some skins quietly refuse a stream they cannot crop themselves; a bitmap gives
+  them nothing to refuse. `setStream` stays as the fallback when decoding fails.
 
 ### Animated background
 

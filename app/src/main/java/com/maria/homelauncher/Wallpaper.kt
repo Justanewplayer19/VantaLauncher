@@ -2,6 +2,8 @@ package com.maria.homelauncher
 
 import android.app.WallpaperManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.work.Constraints
@@ -93,15 +95,34 @@ object Wallpaper {
             TARGET_LOCK -> listOf(WallpaperManager.FLAG_LOCK)
             else -> listOf(WallpaperManager.FLAG_SYSTEM, WallpaperManager.FLAG_LOCK)
         }
+
+        // A live wallpaper is drawn *over* the static one. Setting a picture underneath
+        // one reports success and changes nothing you can see, which is exactly what it
+        // looks like when a phone that ships with a moving wallpaper ignores you. Samsung
+        // is the usual one. Clearing it first is the only way to be seen.
+        if (runCatching { wm.wallpaperInfo }.getOrNull() != null) {
+            flags.forEach { runCatching { wm.clear(it) } }
+        }
+
+        // Decoded here rather than handed over as a stream: some skins quietly refuse a
+        // stream they cannot crop themselves, and a bitmap gives them nothing to refuse.
+        val bitmap = decode(ctx, uri)
+
         var ok = false
         for (f in flags) {
-            // setStream consumes the stream, so each target needs its own.
-            runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    wm.setStream(input, null, true, f)
-                    ok = true
+            val done = runCatching {
+                if (bitmap != null) {
+                    wm.setBitmap(bitmap, null, true, f)
+                    true
+                } else {
+                    // setStream consumes the stream, so each target needs its own
+                    ctx.contentResolver.openInputStream(uri)?.use { input ->
+                        wm.setStream(input, null, true, f)
+                        true
+                    } ?: false
                 }
-            }
+            }.getOrDefault(false)
+            ok = ok || done
         }
         if (ok) {
             Prefs(ctx).lastWallpaper = uri.toString()
@@ -109,6 +130,30 @@ object Wallpaper {
         }
         return ok
     }
+
+    /**
+     * The picture at roughly the size of the screen. A full-resolution photo is both a
+     * waste and a way to be killed for using too much memory, and the wallpaper service
+     * scales whatever it is given anyway.
+     */
+    private fun decode(ctx: Context, uri: Uri): Bitmap? = runCatching {
+        val metrics = ctx.resources.displayMetrics
+        val want = maxOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        ctx.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > want * 2) sample *= 2
+
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        ctx.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, opts)
+        }
+    }.getOrNull()
 
     fun schedule(ctx: Context) {
         val prefs = Prefs(ctx)
