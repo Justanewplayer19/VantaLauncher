@@ -1,0 +1,578 @@
+# HomeLauncher
+
+A minimal Android home launcher. Kotlin + Jetpack Compose.
+
+## What works
+
+- Replaces the home screen (HOME intent filter, wallpaper shows through)
+- Clock + date
+- Dock of up to 5 favourite apps, persisted
+- Swipe up anywhere -> app drawer
+- Alphabetical app grid with live search
+- Long-press an app -> dock, hide, app info, uninstall
+- **Hidden apps** -- kept out of the grid, only surface when you type in search
+- **Wallpaper rotation** -- pick individual images *or a whole folder* from anywhere on
+  the device, rotate on a timer, home / lock / both, optional shuffle, "Change now"
+- **Single wallpaper** -- set one image immediately without turning rotation on
+- **Single-surface mode** (toggle in settings) -- every app lives on the home pages, no
+  drawer. Long-press to drag, drop one icon centrally on another to make a folder, folders
+  open as an overlay with an editable name, long-press inside to move an app back out,
+  swipe up for a search-only panel. Pages auto-paginate with dots.
+- **Drawer browse style** -- Scroll (one long vertical list) or Pages (swipe left/right,
+  with page dots). Set in settings.
+- **Search bar position** -- Top or Bottom, centred either way. At the bottom it lifts above
+  the keyboard (`imePadding`).
+- **Settings button side** -- Left (default) or Right. The opposite side reserves the same
+  48dp footprint so the search pill stays centred rather than drifting.
+- **Drop guide** -- dragging on the home surface outlines every slot so the landing cell is
+  obvious; the target cell gets a thicker, brighter ring.
+- **First-run intro** -- six screens on first launch: what it is, how to set it as the
+  default home app (with a button straight to that system screen), how to get around, and
+  live toggles for icon shape, columns, labels and single-surface mode. Skippable, and
+  replayable from Settings.
+- Settings is a **list of pages**, not one long scroll: Home layout, Grid, Icons, Colours,
+  Text, Drawer, Wallpaper, Hidden apps, Intro and reset. Back steps up to the list before
+  it leaves settings. (in single-surface mode it is the
+  "Settings" link at the bottom of the swipe-up search panel instead)
+- **Icon packs** -- any third-party icon theme installed on the device. The pack list is
+  read from the packs themselves; no hardcoded names.
+- **Per-app overrides** -- long-press any app to rename it or give it a picture of your
+  own as its icon.
+- **Gestures** -- swipe down, double tap, swipe left and swipe right on the home screen,
+  each set to notifications, quick settings, lock, recents, search, an app, or nothing.
+- **Notification dots** -- an accent dot on apps with something waiting.
+- **Widgets** -- add any widget the device offers from Settings, set its height, reorder
+  the stack, remove it. They sit on the home screen in both modes: between the clock and
+  the dock with a drawer, above the app pages on one surface.
+- **Theming** -- every piece of UI reads from one `Style` model, persisted and live-applied:
+  - Layout: 3-6 columns, icon size, labels on/off, label size
+  - Icon shape: circle / squircle / rounded / square / original
+    - Rows per page, page dots, folder tile shade and corners
+    - Dock: how many apps, background on or off, corner radius
+    - Clock: 12 or 24 hour, show or hide the clock and the date
+    - Accent taken from the wallpaper, once or on every rotation
+    - Icon opacity, so the wallpaper shows through the icons themselves
+  - Icon colour: original, or one-colour themed icons with a full picker (hue,
+    saturation, brightness and alpha bars, live swatch, hex and RGBA entry)
+  - A **live preview** at the top of settings with Home / Drawer tabs, showing the real
+    icons and your first wallpaper image. In Pages mode the preview is genuinely
+    swipeable, with its own page dots.
+  - Colour: accent and background through the same full picker, panel style
+    (blur / dim / solid), opacity and blur strength
+  - Text: system font family, clock / date / search sizes
+  - Reset to defaults
+- Back button does nothing on home, closes the drawer or settings when open
+- Home press while already home closes the drawer
+- Auto-refreshes when apps are installed or removed
+
+### Single-surface notes
+
+The layout is **one ordered list** (`Layout.kt`), not a page/slot grid. Pages are derived by
+chunking it to whatever fits, so changing columns or icon size just reflows and there is no
+page bookkeeping to keep in sync. Folders are items in that same list.
+
+- `syncLayout()` reconciles the saved list against what is installed: drops uninstalled
+  apps, appends new ones at the end, prunes empty folders, and collapses a one-app folder
+  back into a plain app. Order and folder membership survive.
+- **Drag does not live-reorder.** The dragged tile floats under the finger and the target
+  slot is highlighted; the move commits on release. Live reorder made "drop onto" ambiguous
+  because items shift while dragging.
+- Folder vs move is decided by position: the pointer must land inside `FOLDER_HIT` (0.38) of
+  the target cell's half-extent to mean "make a folder". Outer region means "move here".
+- Dwelling within 6% of a page edge for 550ms flips the page mid-drag.
+- A long-press that releases without moving more than 14dp opens the item menu instead of
+  being treated as a drag.
+- Hidden apps are excluded from the layout entirely and reachable only through swipe-up
+  search.
+
+### Colour picker
+
+Four gradient bars rather than a wheel, plus hex and RGBA fields, all editing the same
+value. Two things keep it cheap:
+
+- **Dragging never commits.** Only local HSV state moves while your finger is down;
+  `onCommit` fires on release and on a valid typed value. Icon tint is baked into every
+  icon at render time, so committing per frame would re-render ~20 bitmaps per frame.
+  One gesture now costs one re-render.
+- The bars are plain `Box`es with a `Brush` and two `pointerInput` detectors. No canvas
+  loop, no bitmap, no library.
+
+The Symbol / Icon background chips drive **one** picker rather than showing two, so the
+page stays short. Colours does the same with Accent / Background. There are no preset
+swatches left anywhere.
+
+**Gotcha worth remembering:** `pointerInput(Unit)` keeps the lambdas it was composed with.
+The first version closed over a `remember`ed colour value, so releasing a bar committed a
+stale colour (display said `#FFCA0000`, prefs held `0xFFFF0000`). Callbacks now go through
+`rememberUpdatedState`, and `commit()` recomputes from the state values instead of reading
+a captured snapshot.
+
+### Icon colour and preview
+
+- One-colour icons use the app's own **monochrome layer** (`AdaptiveIconDrawable.getMonochrome()`,
+  API 33+) when it ships one. Most Google apps do and look like proper themed icons.
+- Apps without one fall back to an **alpha silhouette** of the foreground layer. That works
+  everywhere but flattens interior detail -- on this emulator Clock reduces to a bare
+  chevron and TMoble to a filled blob. That is the fallback working as intended, not a bug.
+- Tint is baked at render time like shape, so changing it re-renders every icon. Colours are
+  swatches rather than a slider specifically to keep those changes discrete.
+- `HorizontalPager` defaults to `verticalAlignment = CenterVertically`, so a page with
+  fewer rows floats to the middle. Both the preview pager and any short page need
+  `Alignment.Top` to line up with a full page.
+- Recents are centred with a fixed tile width plus `Arrangement.Center`; `weight(1f)` would
+  stretch them across the full width instead of grouping them.
+- The preview reuses the already-rendered `AppEntry` icons, so it cannot drift from the real
+  surface -- whatever it shows is literally the same bitmaps. Wallpaper is decoded from the
+  first chosen rotation image with `inSampleSize` so a full-size photo is never loaded whole.
+
+### Widgets
+
+Hosting widgets is `AppWidgetHost` plus `AppWidgetManager`, both wrapped in
+`LauncherWidgets`. Three things are worth knowing.
+
+- **Adding is never one call.** A third-party launcher does not hold `BIND_APPWIDGET`
+  (it is privileged), so binding an id to a provider goes through the system consent
+  dialog, and the widget may then want to run its own configure activity. Both return
+  through `onActivityResult`, which is why `MainActivity` still overrides that deprecated
+  method rather than using the Activity Result API: `startAppWidgetConfigureActivityForResult`
+  is the only call that can launch a configure activity a third-party host is not allowed
+  to start directly. Cancelling at either step frees the allocated id again.
+- **`startListening()` lives in `onStart`.** Without it a placed widget renders as an
+  empty box after a cold start. Verified by force-stopping with a clock widget placed.
+- **Size is announced, not imposed.** The frame gets the height you set; the provider is
+  told about it through `updateAppWidgetOptions`, fired from a keyed `LaunchedEffect`
+  because that call broadcasts to the widget and firing it per recomposition would be rude.
+  `prune()` drops ids the system has forgotten, so an uninstalled widget cannot leave a
+  dead frame behind.
+
+Placement is a vertical stack, not free positioning on the grid. The stack reuses the
+same space the layout already had, so neither home mode needed its own arrangement.
+
+### Icon opacity
+
+`Style.iconAlpha` is a plain `Modifier.alpha` at every icon draw site, deliberately **not**
+baked into the bitmap the way shape and tint are. Baking would mean re-rendering every
+icon on each drag of the slider; an alpha modifier is free and makes the slider live.
+
+### Icon packs
+
+Packs are ordinary apps that ship artwork plus an `appfilter.xml`. There is no library
+and no formal spec, only the ADW convention every pack still follows, so `IconPack.kt`
+parses what packs actually ship rather than what a document says.
+
+- Packs are found by the intent filters they declare (`org.adw.launcher.THEMES` and
+  friends), so the list is whatever is installed, never a hardcoded set.
+- `appfilter.xml` lives in `res/xml`, in `assets`, or occasionally in `res/raw`. All
+  three are tried before giving up.
+- A pack icon is drawn exactly as the pack made it. **The shape setting does not apply to
+  it**, because the pack is the shape; masking it again would clip its artwork.
+- Apps the pack has no icon for are dressed in its `iconback`, `iconmask` and `iconupon`
+  at its `scale`, so they still match. The mask is applied `DST_OUT`: it is opaque where
+  the icon should be cut away, which is the convention packs are drawn to.
+- One-colour icons beat a pack, since the two want opposite things. A replacement icon
+  the user picked beats both.
+
+There is a throwaway pack in `testpack/` for exercising all of this without the Play
+Store. It maps three apps and ships a back, mask, overlay and scale, so both halves of
+the pipeline are visible at once. It is a separate module and is never part of the
+launcher APK; build and install it with `:testpack:installDebug`.
+
+### Gestures and the notification shade
+
+The shade itself cannot be restyled. It belongs to SystemUI, and no launcher of any kind
+changes how it looks without a custom ROM. What a launcher can do is open it, and read
+what is in it.
+
+- Opening the shade, quick settings, recents, and locking the screen are **global
+  actions**, reserved to accessibility services. There is no permission to request
+  instead. `LauncherAccess` exists only to call `performGlobalAction`: it listens for no
+  events and cannot read window content (`canRetrieveWindowContent="false"`).
+- When a gesture needs that service and it is off, the action says so and drops the user
+  on the screen where they can turn it on, rather than failing silently.
+- Up and down share one drag detector. Two separate ones fought over the same gesture.
+- Sideways swipes are only wired up in the drawer layout. On one surface they already
+  belong to the home pages, and the settings page says so instead of offering a choice
+  that would not work.
+
+### Notification dots
+
+`NotificationWatch` is a `NotificationListenerService`. It keeps a set of package names
+and nothing else: no titles, no text, nothing stored, nothing sent. Ongoing notifications
+are filtered out, so a download or a music player does not leave a permanent dot. The set
+reaches the UI through `LocalBadges`, a non-static composition local because it changes
+often.
+
+Notification access is a permission only the user can grant, so both this page and the
+gestures page poll their permission once a second while open. Reading it once showed a
+stale answer when the user came back from the system settings screen.
+
+### Per-app overrides
+
+Names live in prefs. A replacement icon is copied into the launcher own files as a
+square PNG rather than referenced by URI, so the picked image can be deleted or its
+permission revoked without leaving a hole on the home screen. Both are keyed by
+"package/activity", and an override survives an icon pack change.
+
+### Accent from the wallpaper
+
+`WallpaperColour` samples a hard-downscaled copy of the image, averages only the pixels
+that are actually colourful, then forces the result to a readable saturation and
+brightness. Deliberately not androidx.palette: that is a library and a clustering pass
+for what is one average over a thumbnail.
+
+With "Follow my wallpaper" on, the rotation worker writes the new accent as it goes.
+That write happens outside the running UI, so `MainActivity.onStart` re-reads the style
+and picks it up.
+
+### Settings structure
+
+`Settings.kt` is a tiny router: a `Page` enum, one `when` over it, and a root list built
+from the enum itself, so adding a page means adding one entry and one branch. Widgets is one
+page with two states rather than two pages, so it owns a `BackHandler` of its own to step
+from the picker back to the list. Each visual
+page gets the live preview at the top; Wallpaper, Hidden apps and Intro do not, since
+nothing on them changes how the launcher looks.
+
+The control bodies live in `Appearance.kt` as independent composables (`GridSection`,
+`IconsSection`, `ColoursSection`, `TextSection`, `DrawerSection`) sharing one set of
+widgets, so none of them knows it is on a page of its own.
+
+A `BackHandler` inside `SettingsScreen` is enabled only off the root, so Back pops to the
+list first and only then leaves settings.
+
+### Intro
+
+`Prefs.onboarded` gates it; absent or false means it shows. It renders above everything in
+`LauncherRoot` and swallows Back so you cannot land behind it. The toggles on its pages
+write to the same `Style`/`Prefs` as the real settings, so choices made during the intro
+are live immediately, not replayed at the end.
+
+"Open home app settings" fires `Settings.ACTION_HOME_SETTINGS`, falling back to the top
+level of Settings if that action does not resolve on a given device.
+
+Pressing Start hands over to `ui/WelcomeFade.kt` rather than cutting to the grid. The
+cover starts opaque in the same `bgColor` the intro pages were drawn on, so there is no
+seam at the swap; "Welcome" fades up in the accent, holds, then the cover dissolves over
+1.8s to reveal the wallpaper. A tap ends it early. Skip does not get the ceremony, since
+skipping means the opposite of wanting to be shown things.
+
+Two things keep it smooth, and both were measured with `dumpsys gfxinfo` rather than
+guessed at. The cover is a translucent rect drawn in `drawBehind`, not `Modifier.alpha`
+on the box: alpha on a full-screen node makes the renderer allocate and blend an
+offscreen buffer for the whole screen every frame, which on the emulator took 56% of
+frames over budget. And both animated values are read inside the draw and layer lambdas,
+so a frame costs a redraw rather than a recomposition. After: 3%.
+
+Replay intro in settings flips the state directly instead of only writing `onboarded`.
+The launcher is the home screen and so almost never starts cold, which is why the old
+"shows on next launch" never seemed to happen.
+
+### Fonts
+
+Six providers, behind one id. A stored font is a string like `g:Inter`, `s:Geist Mono`,
+`h:Satoshi`, `d:/system/fonts/Roboto-Regular.ttf`, `f:/data/.../fonts/1730-My.ttf` or
+`b:Serif`, and `Fonts.family` turns it into a `FontFamily`. A bare string with no tag is read as a Google
+family, which is how ids written before there were providers keep working without a
+migration pass over every per-app override. The two old `Style` fields fold into the single
+id once, in `migrateFont`.
+
+Every piece of text in the launcher already went through one `Style.fontFamily` extension,
+so all of this landed behind that property and no call site changed.
+
+- **Your files** are .ttf or .otf files copied into `filesDir/fonts`, because a content URI
+  borrowed from a file manager will not outlive a reboot. Each is turned into a typeface
+  once before being kept, so a file that is not a font is refused at the picker rather than
+  leaving a hole at the next cold start.
+- **On this phone** is `/system/fonts`, which is world readable. Around two hundred files on
+  a stock image, most of them one alphabet each. They need no fetch, no network and no Play
+  services. The file list is folded to one row per family: the plain file beats `-Regular`,
+  which beats `-VF`, which beats `-Bold` and the rest, and `prettify` turns
+  `NotoSansBengaliUI-VF.ttf` into "Noto Sans Bengali UI".
+- **Built in** is the five generic families the platform always has.
+- **Google Fonts** come two ways. When Play services is there, the downloadable-fonts
+  provider hands back a typeface it caches once for every app on the phone, and the
+  launcher stores nothing. When it is not, `FontWeb` fetches the file straight from the
+  CDN and keeps it, so the font works offline from then on. Neither route needs an account
+  or an API key. Around 1950 families.
+- **Fontsource** is an open mirror with its own catalogue and its files on jsDelivr. About
+  2100 families, of which roughly 1980 are the Google ones again and about 120 are not in
+  Google at all. Its id and default subset build a file path directly, so no request is
+  needed to find a download.
+- **Fontshare** is 100 families from Indian Type Foundry, none of them in Google. Its file
+  URLs are opaque hashes, so each download costs a stylesheet request first. It also files
+  a font under several categories at once and hands them over as one string, so the group
+  chips split on the comma and such a font appears under each.
+
+`searchAll` is the cross-provider search. It walks the providers in preference order,
+groups by lowercased name and keeps the first, so the local copy wins over a download of
+the same family: the phone really does ship Roboto, Dancing Script and others that are also
+in the Google catalogue, and nearly all of Fontsource is Google again under another name.
+Google is ordered ahead of the two mirrors because on a phone with Play services it is the
+one route that stores nothing. The row then says where else that name was found, so the
+choice is visible rather than silently made. To force a particular provider's copy, switch to that
+provider and pick it there.
+
+The Play services provider has to be told which signing certificates count as the real
+Play services.
+The documented way is to paste a block of base64 into resources, which androidx does not
+ship and which is only a copy of what is already on the phone. `Fonts.init` asks the
+package manager for them instead. It must use the deprecated `GET_SIGNATURES` to do it:
+that is exactly what the androidx font code asks for when it checks back, and the lists
+are compared whole, so the newer signing-certificate history can hand back a rotated
+certificate the check has never seen. Getting this wrong fails silently, with no fetch
+attempted and no log line. The trade is that a phone whose Play services had been replaced
+would not be caught; the package name is pinned and the real one is a system app.
+
+The family list comes from `https://fonts.google.com/metadata/fonts`, the same JSON
+fonts.google.com itself loads. It is around 1950 families with their categories, needs no
+key, and is cached to a file and refreshed weekly. The shorter list in `Fonts.kt` is the
+fallback for a phone that has never had a connection, and supplies the curated "Popular"
+group that stays at the front of the tabs; the rest of the tabs are Google's own categories
+once the fetch has landed. Any name typed by hand is passed straight through either way.
+
+Fetching one Google file is two requests. `https://fonts.googleapis.com/css2?family=<Family>`,
+asked by something whose user agent does not claim to understand woff2, answers with CSS
+containing a direct `.ttf` URL, and that URL is the download. Fontshare works the same way
+but refuses that ancient user agent outright, so it gets a current one: the two providers
+need opposite lies about the browser. Fontsource needs no stylesheet at all, since the path
+is predictable from the catalogue.
+
+Every download lands under a `.part` name and is renamed only once it is complete, so a
+dropped connection cannot leave something that looks like a font but is not one. Android
+cannot read woff2 or woff, which is the whole reason for the user agent games, and it is
+why Bunny Fonts is not here: it is reachable and free, but serves nothing else.
+
+The picker shows a pageful at a time, each row drawn in the font it offers. That cap is
+deliberate: a row on a web tab is a real download, so a whole catalogue on one screen would
+ask for two thousand of them before anyone had chosen anything.
+
+Those previews are cached per provider under `filesDir/net/<tag>`, and the cache is capped
+at 48 files each, oldest evicted. Without the cap a few minutes of scrolling quietly keeps
+every font it drew, and some faces are well over a megabyte. The font actually in use lives
+in the same cache, so `FontWeb.touch` restamps it whenever it is resolved, which the home
+screen does constantly: that keeps it at the front of the queue and out of reach of a scroll
+through some other provider. Anything saved with "Keep" is in the user's own folder, where
+pruning never looks.
+
+"Keep" on any web row downloads that family into the user's own font folder. It only
+saves: picking it is still a tap on the row, since wanting a copy and wanting to use it are
+not the same thing. Once saved it shows up under Your files, and the cross-provider search
+folds it together with the catalogue entry it came from.
+
+The button has four words, which it needed: "Keep", "Saving", then "Kept" if the file is
+now in the user's folder or "Retry" if the download failed. It used to have two, so a
+finished save flashed "Saving" and dropped back to "Keep", which reads as though nothing
+happened, and a real failure looked exactly the same. "Kept" is derived from the file list
+rather than from having just pressed the button, so it is still right on a later visit.
+
+Switching provider clears the search box. A name typed against one provider usually matches
+nothing in the next, and leaving it there shows an empty list with no visible reason.
+
+One app can have its own font. It is stored in `Overrides` beside the rename and the
+replacement icon, carried on `AppEntry.font`, and resolved by `Style.familyFor`, which every
+place that draws an app name goes through so they cannot drift apart. Empty means follow
+the global font, which is what all of them do until told otherwise.
+
+Two different things are called a provider here, and only one of them is pluralisable.
+Downloadable fonts are a general Android mechanism, but Play services is the only such
+*provider app* installed on an ordinary phone, so probing for more would find nothing.
+A *catalogue* on the web needs nothing installed, which is why there are three of those and
+why the Google tab works on a phone with no Play services at all. Adding a fourth means a
+list endpoint and a rule for turning a family name into a font file URL, both in `FontWeb`,
+plus an entry in `FontSource`; the picker, the search and the dedupe follow from `web = true`
+and need no changes.
+
+### Themes
+
+`Presets.kt` holds the whole-look presets and `ui/ThemesPage.kt` shows them. A `Preset` is
+a flat list of look values plus `applyTo`, which copies them onto the current `Style` and
+leaves everything else alone, so columns, dock, gestures, widgets and hidden apps survive a
+theme change. Each is a nod rather than a reproduction: what a launcher can actually borrow
+from an old interface is the palette, the icon shape, how much glass there is and the
+typeface, and the preset sets exactly those.
+
+Light themes needed one change first. Every piece of text in the launcher said
+`Color.White`, which quietly ruled them out, so `Style.ink` now carries the text colour and
+`LocalInk` delivers it. The swap was mechanical in all but one spot: a composition local
+cannot be read inside a `drawBehind` or `Canvas` lambda, so the home screen's drop-target
+grid reads it once outside and closes over the value.
+
+The light presets assume a light wallpaper. App names on the home screen sit on the user's
+own picture rather than on the theme, so the ink has nothing to do with what is behind them
+there; the page says so rather than pretending otherwise.
+
+### Theming notes
+
+- `Style` lives in `Style.kt` and reaches the UI through `LocalStyle`. Anything that draws
+  should read from it rather than hardcoding.
+- **Icon shape is baked at render time, not clipped at draw time.** Adaptive icons are
+  drawn from their raw `background`/`foreground` layers so our mask is the only one applied
+  -- clipping the already-system-masked bitmap would leave gaps inside a square. Changing
+  shape triggers a full `repo.reload()`.
+- Older non-adaptive icons are masked as-is, so a square legacy icon can lose its corners.
+- **Blur is real `FLAG_BLUR_BEHIND` + `blurBehindRadius`** (Android 12+). Verified set on
+  the window via `dumpsys window`, but the emulator's GPU does not render it despite
+  `ro.surface_flinger.supports_background_blur=1`. Untested on real hardware. Where blur
+  does not render it degrades to the same result as Dim, which is intentional.
+- Fonts are Android's built-in families (default / sans / serif / mono / cursive). No
+  typefaces are bundled, so no APK bloat and no network dependency. Bundling real custom
+  fonts is a separate decision.
+- A translucent panel sits in our own window, so the home layer is faded out whenever the
+  drawer or settings is open -- otherwise the clock and dock ghost through the panel.
+
+### Wallpaper rotation notes
+
+- Images are picked through the system document picker and stored as content URIs with
+  a **persistable** read grant, so they survive reboots.
+- "Add folder" uses `OpenDocumentTree` and enumerates children with `DocumentsContract`
+  (no `documentfile` dependency). The tree grant covers the child documents, so those URIs
+  keep working too. It reads images **directly inside** the folder, not sub-folders, and
+  does not re-scan later -- images added to the folder afterwards are not picked up.
+- "Choose a wallpaper" applies one image right away via `Wallpaper.setOne`, independent of
+  the rotation list, using the same Apply-to target.
+- Rotation runs on WorkManager. **15 minutes is Android's floor** for periodic background
+  work -- anything shorter needs a foreground service.
+- Lock screen uses `WallpaperManager.FLAG_LOCK`. Some OEM skins block this; stock Android
+  and the emulator are fine.
+- A dead URI (file deleted, permission revoked) is skipped and the rotation moves to the
+  next image rather than stalling.
+
+## Status
+
+Working and verified on the emulator: both home modes, drawer scroll and pages, search,
+hidden apps, drag and folders, wallpaper rotation from files and folders, single wallpaper,
+the colour picker, the live preview, the first-run intro, widgets (add, configure, resize,
+reorder, remove, and surviving a cold start), icon opacity, icon packs (both themed apps
+and dressed ones), renaming an app, swipe-down-for-notifications, swipe-to-lock, and
+notification dots. No outstanding crashes.
+
+One thing could not be driven from adb: **double tap**. Each `adb shell input tap` spawns
+a JVM, which is far slower than the 300ms double-tap window, so the two taps never pair.
+The detector is the stock Compose one and the action it fires is the same code path that
+swipe-to-lock proved, but the pairing of the two taps is untested. Try it by hand.
+
+## The loop
+
+The emulator must be running. Then, from this folder:
+
+```
+.\dev.ps1 boot      start the emulator (once per session)
+.\dev.ps1 run       build + install + set as home + press home
+.\dev.ps1 restart   force-stop and relaunch, fastest way to see a change
+.\dev.ps1 log       tail logcat for just this app
+.\dev.ps1 reset     hand the home app back to the stock launcher
+.\dev.ps1 wipe      clear saved dock favourites
+```
+
+Android Studio is **not** needed. It is installed, but only useful as a code editor.
+
+## Toolchain as actually installed
+
+| piece | value |
+|---|---|
+| Android Studio | 2026.2.1 (Rabbit 1) |
+| Gradle | 8.9 (wrapper committed) |
+| AGP / Kotlin | 8.7.3 / 2.0.21 |
+| JDK for Gradle | Temurin 21, `C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot` |
+| compileSdk / target | 35 / 35, minSdk 26 |
+| build-tools | 35.0.0 (AGP 8.7.3 requires it; 36.0.0 alone is not enough) |
+| AVD | `Medium_Phone_API_37.0`, API 37, google_apis_playstore, x86_64 |
+| acceleration | WHPX (VBS/Hyper-V active; HAXM is discontinued and incompatible) |
+
+### Gotchas that cost time
+
+- **Studio bundles JDK 25, Gradle 8.9 does not support it.** Temurin 21 is installed and
+  `gradle.properties` sets `org.gradle.java.home`. That is not enough on its own --
+  `gradlew.bat` needs a JVM *before* it reads that file, so `dev.ps1` also sets `JAVA_HOME`.
+- **`sdkmanager` and `avdmanager` are deprecated** in this release, replaced by a single
+  `android` CLI (`cmdline-tools/latest/bin/android.exe`). Package paths changed from
+  `build-tools;35.0.0` to `build-tools/35.0.0`.
+- **`$ErrorActionPreference = 'Stop'` breaks the script.** Windows PowerShell turns native
+  stderr into an ErrorRecord, and both gradlew and adb write harmless warnings there.
+  `dev.ps1` uses `'Continue'` and checks exit codes explicitly.
+- **Do not capture screenshots with `adb exec-out screencap -p > file.png` in PowerShell.**
+  Redirection adds a BOM and corrupts the binary. Use `adb shell screencap -p /sdcard/s.png`
+  then `adb pull`.
+- Running an API 35 build on an API 37 device is normal and supported.
+
+### Readability and gestures
+
+- Anything drawn straight onto the wallpaper (clock, date, hint, app names) carries a soft
+  black `Shadow`. Without it white text disappears entirely on a light wallpaper, which is
+  not hypothetical: the stock emulator image is near-white.
+- The drawer closes on **pull-down past the top of the list**, via a `NestedScrollConnection`
+  watching unconsumed downward scroll while `canScrollBackward` is false. The earlier
+  plain drag only worked on the margins, because the grid consumed vertical drags first.
+
+### Things that bite on the emulator
+
+- **The app grid eats swipe-down-to-close.** Closing by swipe works on the search bar and
+  margins only. Back button and launching an app also close it. Proper fix is a
+  nested-scroll connection; not done yet.
+- **Gesture nav vs swipe-up** is handled -- drags starting in the system gesture inset are
+  ignored. Start swipes from mid-screen.
+- **Cold boot is slow, snapshots are fast.** Leave the AVD running between builds.
+
+## Building a shareable APK
+
+```
+gradlew assembleDebug
+```
+
+Output lands at `app/build/outputs/apk/debug/app-debug.apk`. That installs on any phone with
+"install unknown apps" allowed. Debug-signed, so it is fine for you and friends but not for
+the Play Store.
+
+## Layout
+
+```
+app/src/main/java/com/maria/homelauncher/
+  MainActivity.kt       activity, HOME wiring, onNewIntent, window blur, style state
+  AppRepo.kt            installed apps, icon rendering (shape mask + mono tint), intents
+  Layout.kt             single-surface item list, folders, JSON store, install sync
+  Prefs.kt              dock, hidden apps, wallpapers, flags
+  Style.kt              the whole look as one data class, plus LocalStyle
+  Wallpaper.kt          rotation worker, folder enumeration, apply
+  Widgets.kt            widget host, saved list, the two-step add flow
+  IconPack.kt           third-party icon themes: discovery, appfilter, masking
+  Overrides.kt          per-app name and icon replacements
+  Gestures.kt           accessibility service and the gesture actions
+  Fonts.kt              the six font providers, behind one id
+  FontWeb.kt            Google, Fontsource and Fontshare over plain HTTP
+  Presets.kt            whole-look themes and how they apply
+  NotificationWatch.kt  notification listener, package names only
+  WallpaperColour.kt    accent sampled out of the wallpaper
+  ui/Launcher.kt        root, home screen, drawer, paged grid, item sheet
+  ui/HomeGrid.kt        single-surface pages, drag, drop guide, folder tiles
+  ui/Overlays.kt        folder overlay, search-only panel
+  ui/Settings.kt        page router, root list, wallpaper and hidden pages
+  ui/Appearance.kt      the per-page control bodies and shared widgets
+  ui/ColorPicker.kt     hue/sat/bright/alpha bars, hex and RGBA entry
+  ui/Preview.kt         live mock of home and drawer
+  ui/Onboarding.kt      six-screen first-run intro
+  ui/WelcomeFade.kt     the fade from the last intro page into home
+  ui/FontPage.kt        the font picker: provider dots, search, keep
+  ui/ThemesPage.kt      the preset list, each row in its own colours
+  ui/WidgetViews.kt     widget stack, settings page, provider picker
+  ui/GesturesPage.kt    one row per gesture, with its chooser
+  ui/BadgesPage.kt      notification dots and their permission
+  ui/AppEdit.kt         rename and change-icon dialog
+  ui/Theme.kt           Material scheme from Style
+```
+
+## Not done yet
+
+- **A notification panel of our own.** The listener already sees what is waiting, so the
+  launcher could draw that list in its own style instead of only opening the system one.
+- **A quick settings tile**, so Home appears as a toggle in the real QS panel.
+- **Icon pack shape normalising.** A pack icon is used exactly as drawn. Packs with
+  inconsistent artwork will look inconsistent.
+- **Widget placement on the grid.** Widgets stack vertically above the apps; they cannot
+  be dragged into a particular cell or resized by their corners the way the stock launcher
+  does. Height is a slider in settings.
+- **Folder re-scan.** Picking a wallpaper folder snapshots it; images added later are not
+  picked up until you pick the folder again.
+- **System-wide recents.** Removed on request. If it ever comes back, `UsageStatsManager`
+  would make it see launches from outside this launcher, at the cost of a permission.
+- A dead `recents` key may still sit in `launcher.xml` from the removed feature. Nothing
+  reads it.

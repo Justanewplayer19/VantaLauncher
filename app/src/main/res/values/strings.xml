@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Home</string>
+    <string name="access_label">Home gestures</string>
+    <string name="access_desc">Lets the Home launcher pull down notifications, open quick settings, show recent apps and lock the screen when you use a gesture. It does not read anything on your screen.</string>
+    <string name="badge_label">Home notification dots</string>
+</resources>

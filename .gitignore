@@ -1,0 +1,18 @@
+*.iml
+.gradle
+/.idea
+/.kotlin
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+
+# machine specific: the sdk path lives here
+local.properties
+
+# the signing key and its passwords. Losing these means a new key, and a new key
+# means the app can no longer be installed over an older build of itself.
+keystore.properties
+*.jks
+*.keystore
