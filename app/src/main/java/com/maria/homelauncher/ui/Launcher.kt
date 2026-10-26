@@ -138,6 +138,12 @@ fun LauncherRoot(
     var audio by remember { mutableStateOf(prefs.homeAudio) }
     var audioLoop by remember { mutableStateOf(prefs.audioLoop) }
     var audioVolume by remember { mutableStateOf(prefs.audioVolume) }
+    // whether a gesture has anywhere to go, so a detector is only put in the way of the
+    // grid's own touches when there is a reason to
+    var doubleSet by remember { mutableStateOf(prefs.gDoubleTap != Gestures.NONE) }
+    var sideSet by remember {
+        mutableStateOf(prefs.gSwipeLeft != Gestures.NONE || prefs.gSwipeRight != Gestures.NONE)
+    }
     var pendingSpot by remember { mutableStateOf<Placed?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -165,6 +171,8 @@ fun LauncherRoot(
         audio = prefs.homeAudio
         audioLoop = prefs.audioLoop
         audioVolume = prefs.audioVolume
+        doubleSet = prefs.gDoubleTap != Gestures.NONE
+        sideSet = prefs.gSwipeLeft != Gestures.NONE || prefs.gSwipeRight != Gestures.NONE
     }
 
     fun closeSettings() {
@@ -311,6 +319,10 @@ fun LauncherRoot(
                             widgets.add(info)
                         },
                         onCellSize = { w, h -> cellDp = w to h },
+                        onDoubleTap = if (doubleSet) ({ onGesture("double") }) else null,
+                        onSideSwipe = if (sideSet) ({ dir: Int ->
+                            onGesture(if (dir < 0) "left" else "right")
+                        }) else null,
                         // with a drawer the home screen is yours to arrange, so an icon
                         // can be taken off it; on one surface every app lives here and
                         // removing one would only mean hiding it

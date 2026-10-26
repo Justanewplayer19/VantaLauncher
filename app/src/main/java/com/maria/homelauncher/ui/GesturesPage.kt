@@ -57,15 +57,13 @@ fun GesturesPage(prefs: Prefs, apps: List<AppEntry>, single: Boolean) {
         row("down", "Swipe down", prefs.gSwipeDown) { prefs.gSwipeDown = it }
         row("double", "Double tap", prefs.gDoubleTap) { prefs.gDoubleTap = it }
 
-        if (single) {
-            Hint(
-                "Sideways swipes belong to your home pages in this mode, so they cannot " +
-                    "be reassigned. Switch to the drawer layout to use them."
-            )
-        } else {
-            row("left", "Swipe left", prefs.gSwipeLeft) { prefs.gSwipeLeft = it }
-            row("right", "Swipe right", prefs.gSwipeRight) { prefs.gSwipeRight = it }
-        }
+        row("left", "Swipe left", prefs.gSwipeLeft) { prefs.gSwipeLeft = it }
+        row("right", "Swipe right", prefs.gSwipeRight) { prefs.gSwipeRight = it }
+        Hint(
+            "A sideways swipe moves between home pages first. Yours runs when there is " +
+                "only one page, since then there is nothing to move to." +
+                if (single) " On one surface your apps usually fill several pages." else ""
+        )
     }
 
     Spacer(Modifier.height(22.dp))

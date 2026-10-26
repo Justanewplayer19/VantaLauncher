@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -63,6 +64,9 @@ import kotlin.math.roundToInt
 /** Pointer must land inside this fraction of a cell half-extent to mean "make a folder". */
 private const val FOLDER_HIT = 0.38f
 
+/** How far sideways counts as a swipe, matching the one the rest of the home screen uses. */
+private const val SIDE_SWIPE_DP = 72
+
 /**
  * The home surface: a grid of cells that anything can be put anywhere in. Items keep the
  * spot they were dropped on, gaps are allowed, and widgets sit in the same grid as the
@@ -91,6 +95,15 @@ fun HomeGrid(
     onPlaceWidget: (AppWidgetProviderInfo, Int, Int, Int, Int, Int) -> Unit,
     onCellSize: (Float, Float) -> Unit,
     canRemoveApps: Boolean,
+    /**
+     * Set when a double tap has somewhere to go. The home screen's gesture modifier sits
+     * on the parent and never sees one: the bare-wallpaper box below is a child, it holds
+     * the detector that answers a long press, and it consumes the touch before the parent
+     * is asked. So a double tap has to be answered here or not at all.
+     */
+    onDoubleTap: (() -> Unit)? = null,
+    /** -1 for a swipe left, 1 for a swipe right. Only consulted on a single page. */
+    onSideSwipe: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -190,16 +203,38 @@ fun HomeGrid(
             val pageItems = live.filter { it.page == page }
 
             Box(Modifier.fillMaxSize()) {
-                // bare wallpaper: hold to rearrange, tap to stop
+                // bare wallpaper: hold to rearrange, tap to stop, and whatever a double
+                // tap was set to. A single page has no sideways scrolling to protect, so
+                // the swipe gestures live here too in that case; with more than one page
+                // the pager has the better claim on a sideways drag.
+                val sideways = onSideSwipe.takeIf { kept == 1 && !editing }
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .pointerInput(editing) {
+                        .pointerInput(editing, onDoubleTap != null) {
                             detectTapGestures(
                                 onLongPress = { if (!editing) onEditing(true) },
+                                onDoubleTap = onDoubleTap?.let { act -> { _: Offset -> act() } },
                                 onTap = { if (editing) onEditing(false) }
                             )
                         }
+                        .then(
+                            if (sideways == null) Modifier else Modifier.pointerInput(sideways) {
+                                var total = 0f
+                                var fired = false
+                                detectHorizontalDragGestures(
+                                    onDragStart = { total = 0f; fired = false },
+                                    onDragEnd = { total = 0f; fired = false },
+                                    onDragCancel = { total = 0f; fired = false }
+                                ) { _, dx ->
+                                    if (fired) return@detectHorizontalDragGestures
+                                    total += dx
+                                    val threshold = SIDE_SWIPE_DP.dp.toPx()
+                                    if (total < -threshold) { fired = true; sideways(-1) }
+                                    else if (total > threshold) { fired = true; sideways(1) }
+                                }
+                            }
+                        )
                 )
 
                 if (editing || busy) {

@@ -255,9 +255,15 @@ what is in it.
 - When a gesture needs that service and it is off, the action says so and drops the user
   on the screen where they can turn it on, rather than failing silently.
 - Up and down share one drag detector. Two separate ones fought over the same gesture.
-- Sideways swipes are only wired up in the drawer layout. On one surface they already
-  belong to the home pages, and the settings page says so instead of offering a choice
-  that would not work.
+- **Double tap and sideways swipes are answered by the grid, not by the home screen.**
+  The gesture modifier sits on the column that holds everything, but the grid fills that
+  column and its bare-wallpaper box has a tap detector of its own, for the long press
+  that starts edit mode. A child is asked first and consumes the touch, so the parent's
+  detector never saw a tap at all: double tap did nothing, whatever it was set to. Both
+  now hang off that same box, where the touches actually land.
+- A sideways swipe moves between home pages first, in either layout. The gesture only
+  runs on a single page, where there is nothing to scroll to, and the settings page says
+  so rather than offering a choice that quietly loses.
 
 ### Notification dots
 
