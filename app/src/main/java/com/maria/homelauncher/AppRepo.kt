@@ -160,6 +160,8 @@ class AppRepo(private val ctx: Context) {
     }
 
     fun launch(app: AppEntry) {
+        // counted so search can put the apps you actually open first
+        runCatching { Prefs(ctx).noteLaunch(app.packageName) }
         val i = Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_LAUNCHER)
             .setClassName(app.packageName, app.activityName)

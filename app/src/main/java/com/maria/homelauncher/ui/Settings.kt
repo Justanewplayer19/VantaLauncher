@@ -102,6 +102,13 @@ internal fun SettingsScreen(
     var page by remember { mutableStateOf(startPage ?: Page.Root) }
     var pics by remember { mutableStateOf(prefs.wallpapers) }
     var picFolders by remember { mutableStateOf(prefs.wallpaperFolders) }
+    var lockPics by remember { mutableStateOf(prefs.lockWallpapers) }
+    var lockPicFolders by remember { mutableStateOf(prefs.lockWallpaperFolders) }
+    var separate by remember { mutableStateOf(prefs.lockSeparate) }
+    // which set the picker that is about to open is filling, since the result comes back
+    // long after the button was pressed
+    var pickInto by remember { mutableStateOf(TARGET_HOME) }
+    var singleTarget by remember { mutableStateOf(TARGET_BOTH) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var audio by remember { mutableStateOf(prefs.homeAudio) }
     var hidden by remember { mutableStateOf(prefs.hidden) }
@@ -122,10 +129,16 @@ internal fun SettingsScreen(
                 u.toString()
             }.getOrNull()
         }
-        pics = (pics + kept).distinct()
-        prefs.wallpapers = pics
+        val lock = pickInto == TARGET_LOCK
+        if (lock) {
+            lockPics = (lockPics + kept).distinct()
+            prefs.lockWallpapers = lockPics
+        } else {
+            pics = (pics + kept).distinct()
+            prefs.wallpapers = pics
+        }
         Wallpaper.schedule(ctx)
-        note = "${kept.size} added"
+        note = "${kept.size} added to the ${if (lock) "lock" else "home"} set"
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -148,10 +161,15 @@ internal fun SettingsScreen(
         }
         // the folder itself is kept, not the files in it, so anything added to it later
         // joins the rotation without being picked again
-        picFolders = (picFolders + tree.toString()).distinct()
-        prefs.wallpaperFolders = picFolders
+        if (pickInto == TARGET_LOCK) {
+            lockPicFolders = (lockPicFolders + tree.toString()).distinct()
+            prefs.lockWallpaperFolders = lockPicFolders
+        } else {
+            picFolders = (picFolders + tree.toString()).distinct()
+            prefs.wallpaperFolders = picFolders
+        }
         Wallpaper.schedule(ctx)
-        note = "folder added, ${found.size} image(s) in it now"
+        note = "folder added, ${found.size} picture(s) in it now"
     }
 
     val livePicker = rememberLauncherForActivityResult(
@@ -251,8 +269,8 @@ internal fun SettingsScreen(
             )
         }
         scope.launch {
-            note = if (Wallpaper.setOne(ctx, uri, prefs.rotateTarget)) "wallpaper set"
-            else "could not read that image"
+            note = if (Wallpaper.setOne(ctx, uri, singleTarget)) "wallpaper set"
+            else "could not read that one"
         }
     }
 
@@ -358,10 +376,27 @@ internal fun SettingsScreen(
                     prefs = prefs,
                     pics = pics,
                     folderCount = picFolders.size,
+                    lockPics = lockPics,
+                    lockFolderCount = lockPicFolders.size,
+                    separate = separate,
+                    onSeparate = {
+                        separate = it
+                        prefs.lockSeparate = it
+                        Wallpaper.schedule(ctx)
+                    },
                     liveBg = liveBg,
-                    onAddImages = { picker.launch(arrayOf("image/*")) },
-                    onAddFolder = { folderPicker.launch(null) },
-                    onPickSingle = { singlePicker.launch(arrayOf("image/*")) },
+                    onAddImages = { target ->
+                        pickInto = target
+                        picker.launch(arrayOf("image/*", "video/*"))
+                    },
+                    onAddFolder = { target ->
+                        pickInto = target
+                        folderPicker.launch(null)
+                    },
+                    onPickSingle = { target ->
+                        singleTarget = target
+                        singlePicker.launch(arrayOf("image/*", "video/*"))
+                    },
                     onPickLive = {
                         livePicker.launch(arrayOf("image/gif", "image/webp", "video/*"))
                     },
@@ -370,18 +405,26 @@ internal fun SettingsScreen(
                         prefs.liveBg = ""
                         note = "animated background removed"
                     },
-                    onClear = {
-                        pics = emptyList()
-                        picFolders = emptyList()
-                        prefs.wallpapers = pics
-                        prefs.wallpaperFolders = picFolders
+                    onClearSet = { target ->
+                        if (target == TARGET_LOCK) {
+                            lockPics = emptyList()
+                            lockPicFolders = emptyList()
+                            prefs.lockWallpapers = lockPics
+                            prefs.lockWallpaperFolders = lockPicFolders
+                            note = "lock set cleared"
+                        } else {
+                            pics = emptyList()
+                            picFolders = emptyList()
+                            prefs.wallpapers = pics
+                            prefs.wallpaperFolders = picFolders
+                            note = "home set cleared"
+                        }
                         Wallpaper.schedule(ctx)
-                        note = "cleared"
                     },
                     onChangeNow = {
                         scope.launch {
                             note = if (Wallpaper.advance(ctx)) "wallpaper changed"
-                            else "could not read any of those images"
+                            else "could not read any of those pictures"
                         }
                     }
                 )
@@ -481,13 +524,17 @@ private fun WallpaperPage(
     prefs: Prefs,
     pics: List<String>,
     folderCount: Int,
+    lockPics: List<String>,
+    lockFolderCount: Int,
+    separate: Boolean,
+    onSeparate: (Boolean) -> Unit,
     liveBg: String,
-    onAddImages: () -> Unit,
-    onAddFolder: () -> Unit,
-    onPickSingle: () -> Unit,
+    onAddImages: (Int) -> Unit,
+    onAddFolder: (Int) -> Unit,
+    onPickSingle: (Int) -> Unit,
     onPickLive: () -> Unit,
     onClearLive: () -> Unit,
-    onClear: () -> Unit,
+    onClearSet: (Int) -> Unit,
     onChangeNow: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -495,12 +542,18 @@ private fun WallpaperPage(
     var loop by remember { mutableStateOf(prefs.liveLoop) }
     var lockOn by remember { mutableStateOf(prefs.lockRotate) }
     var lockRandom by remember { mutableStateOf(prefs.lockRandom) }
+    var single by remember { mutableStateOf(TARGET_BOTH) }
 
     // read off the disk rather than from what was saved, so a watched folder reports what
     // is in it now and not what was in it when it was picked
-    var available by remember { mutableStateOf(-1) }
-    LaunchedEffect(pics, folderCount) {
-        available = withContext(Dispatchers.IO) { Wallpaper.sources(ctx).size }
+    var homeNow by remember { mutableStateOf(-1) }
+    var lockNow by remember { mutableStateOf(-1) }
+    LaunchedEffect(pics, folderCount, lockPics, lockFolderCount, separate) {
+        val counts = withContext(Dispatchers.IO) {
+            Wallpaper.sources(ctx, TARGET_HOME).size to Wallpaper.sources(ctx, TARGET_LOCK).size
+        }
+        homeNow = counts.first
+        lockNow = counts.second
     }
     var minutes by remember { mutableStateOf(prefs.rotateMinutes) }
     var target by remember { mutableStateOf(prefs.rotateTarget) }
@@ -508,12 +561,63 @@ private fun WallpaperPage(
 
     Label("Just one")
     Text(
-        "Set a single image and leave rotation off.",
+        "Set a single picture and leave rotation off.",
         color = LocalInk.current.copy(alpha = 0.45f),
         fontSize = 11.sp,
         modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
     )
-    Button(onClick = onPickSingle) { Text("Choose a wallpaper") }
+    val whichOne = listOf(TARGET_HOME to "Home", TARGET_LOCK to "Lock", TARGET_BOTH to "Both")
+    ChipRow(whichOne.map { it.second }, whichOne.indexOfFirst { it.first == single }) { i ->
+        single = whichOne[i].first
+    }
+    Spacer(Modifier.height(10.dp))
+    Button(onClick = { onPickSingle(single) }) { Text("Choose a wallpaper") }
+
+    Spacer(Modifier.height(26.dp))
+    Label("Two sets or one")
+    Spacer(Modifier.height(6.dp))
+    ToggleRow("Give the lock screen its own pictures", separate, onSeparate)
+    Hint(
+        if (separate) {
+            "The lock screen draws from its own set below and the home screen from its " +
+                "own, so the two never show each other's pictures. Each keeps its own " +
+                "place in its own list."
+        } else {
+            "Both screens draw from one set. Turn this on to keep them apart."
+        }
+    )
+
+    Spacer(Modifier.height(22.dp))
+    PictureSet(
+        title = if (separate) "Home pictures" else "Pictures",
+        files = pics.size,
+        folders = folderCount,
+        available = homeNow,
+        onAdd = { onAddImages(TARGET_HOME) },
+        onAddFolder = { onAddFolder(TARGET_HOME) },
+        onClear = { onClearSet(TARGET_HOME) }
+    )
+    Hint(
+        "Pick single files, or a whole folder from anywhere on the device. A folder is " +
+            "re-read every time the wallpaper changes, so pictures you add to it later " +
+            "join in on their own. It reads what is directly inside, not sub-folders."
+    )
+
+    if (separate) {
+        Spacer(Modifier.height(22.dp))
+        PictureSet(
+            title = "Lock screen pictures",
+            files = lockPics.size,
+            folders = lockFolderCount,
+            available = lockNow,
+            onAdd = { onAddImages(TARGET_LOCK) },
+            onAddFolder = { onAddFolder(TARGET_LOCK) },
+            onClear = { onClearSet(TARGET_LOCK) }
+        )
+        if (lockPics.isEmpty() && lockFolderCount == 0) {
+            Hint("Nothing here yet, so the lock screen is left alone until you add something.")
+        }
+    }
 
     Spacer(Modifier.height(26.dp))
     Label("Rotate through several")
@@ -523,32 +627,6 @@ private fun WallpaperPage(
         prefs.rotateOn = it
         Wallpaper.schedule(ctx)
     }
-
-    Text(
-        buildString {
-            append(if (pics.isEmpty()) "No images chosen" else "${pics.size} image(s) chosen")
-            if (folderCount > 0) append(", $folderCount folder(s) watched")
-            if (available >= 0) append(", $available in the rotation right now")
-        },
-        color = LocalInk.current.copy(alpha = 0.65f),
-        fontSize = 13.sp,
-        modifier = Modifier.padding(vertical = 6.dp)
-    )
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onAddImages) { Text("Add images") }
-        OutlinedButton(onClick = onAddFolder) { Text("Add folder") }
-        // a watched folder is removable too, and it is the only thing in the list when
-        // no single images were ever picked
-        if (pics.isNotEmpty() || folderCount > 0) {
-            OutlinedButton(onClick = onClear) { Text("Clear") }
-        }
-    }
-    Hint(
-        "Pick single images, or a whole folder from anywhere on the device. A folder is " +
-            "re-read every time the wallpaper changes, so pictures you add to it later " +
-            "join in on their own. It reads the images directly inside, not sub-folders."
-    )
 
     Spacer(Modifier.height(16.dp))
     Label("Every")
@@ -567,6 +645,13 @@ private fun WallpaperPage(
     ChipRow(targets.map { it.second }, targets.indexOfFirst { it.first == target }) { i ->
         target = targets[i].first
         prefs.rotateTarget = target
+        Wallpaper.schedule(ctx)
+    }
+    if (separate && target == TARGET_BOTH) {
+        Hint(
+            "With two sets, Both means one picture from each: the home set goes on the " +
+                "home screen and the lock set on the lock screen, at the same moment."
+        )
     }
     Hint("Some phone skins block apps from setting the lock screen. Stock Android is fine.")
 
@@ -577,7 +662,7 @@ private fun WallpaperPage(
     }
 
     Spacer(Modifier.height(12.dp))
-    Button(enabled = pics.isNotEmpty() || folderCount > 0, onClick = onChangeNow) {
+    Button(enabled = homeNow > 0 || lockNow > 0, onClick = onChangeNow) {
         Text("Change now")
     }
 
@@ -597,18 +682,18 @@ private fun WallpaperPage(
         }
     }
     Hint(
-        "Uses the same images and folders as the rotation above, and touches the lock " +
-            "screen only, so your home wallpaper stays where it is. The change happens " +
-            "on the way off rather than on the way on, so it is already there when the " +
-            "screen lights up. It keeps its own place in the list, separate from the " +
-            "timed rotation."
+        (if (separate) "Uses the lock screen set above. "
+        else "Uses the one set above, since both screens are sharing it. ") +
+            "It touches the lock screen only, so your home wallpaper stays where it is. " +
+            "The change happens on the way off rather than on the way on, so it is " +
+            "already there when the screen lights up, and it keeps its own place in the " +
+            "list, separate from the timed rotation."
     )
 
     Spacer(Modifier.height(26.dp))
     Label("Animated background")
     Text(
-        if (liveBg.isBlank()) "None"
-        else "Playing behind the launcher",
+        if (liveBg.isBlank()) "None" else "Playing behind the home screen",
         color = LocalInk.current.copy(alpha = 0.65f),
         fontSize = 13.sp,
         modifier = Modifier.padding(vertical = 6.dp)
@@ -633,11 +718,49 @@ private fun WallpaperPage(
     }
 
     Hint(
-        "This is drawn by the launcher rather than set as the system wallpaper, which " +
-            "only takes still images. It pauses whenever another app is in front, and " +
-            "what you see under other apps and on the lock screen is still the picture " +
-            "above."
+        "This one really moves, and it belongs to the home screen alone: the launcher " +
+            "draws it in its own window, which is the only surface it is allowed to " +
+            "draw on. It pauses whenever another app is in front."
     )
+    Hint(
+        "The lock screen cannot have a moving one from an app that is not a live " +
+            "wallpaper, because Android only ever takes a still picture there. A GIF or " +
+            "a video dropped into either set above is still welcome though: a frame is " +
+            "taken out of it, and that frame is what goes on."
+    )
+}
+
+/** One set of pictures: how many there are, and the three things you can do to it. */
+@Composable
+private fun PictureSet(
+    title: String,
+    files: Int,
+    folders: Int,
+    available: Int,
+    onAdd: () -> Unit,
+    onAddFolder: () -> Unit,
+    onClear: () -> Unit
+) {
+    Label(title)
+    Text(
+        buildString {
+            append(if (files == 0) "No files chosen" else "$files file(s) chosen")
+            if (folders > 0) append(", $folders folder(s) watched")
+            if (available >= 0) append(", $available in the rotation right now")
+        },
+        color = LocalInk.current.copy(alpha = 0.65f),
+        fontSize = 13.sp,
+        modifier = Modifier.padding(vertical = 6.dp)
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onAdd) { Text("Add pictures") }
+        OutlinedButton(onClick = onAddFolder) { Text("Add folder") }
+        // a watched folder is removable too, and it is the only thing in the list when
+        // no single files were ever picked
+        if (files > 0 || folders > 0) {
+            OutlinedButton(onClick = onClear) { Text("Clear") }
+        }
+    }
 }
 
 @Composable

@@ -104,6 +104,8 @@ fun HomeGrid(
     onDoubleTap: (() -> Unit)? = null,
     /** -1 for a swipe left, 1 for a swipe right. Only consulted on a single page. */
     onSideSwipe: ((Int) -> Unit)? = null,
+    /** An app on its way over from the drawer. The grid aims it and puts it down. */
+    carry: CarryOut? = null,
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -161,7 +163,10 @@ fun HomeGrid(
         var sizeCorner by remember { mutableStateOf(Offset.Zero) }
 
         val dragged = live.firstOrNull { it.item.key == dragKey }
-        val busy = dragKey != null || sizeKey != null || trayInfo != null
+        // an app being carried in counts as busy too: the lattice belongs up, the pager
+        // has to stay still, and the spare page at the end has to exist
+        val coming = carry?.app
+        val busy = dragKey != null || sizeKey != null || trayInfo != null || coming != null
 
         // Pages are kept on purpose now, empty or not, so the count is whichever is
         // larger: what was asked for, or what is needed to hold the furthest item. The
@@ -193,6 +198,76 @@ fun HomeGrid(
         fun remove(p: Placed) {
             (p.item as? Item.Widget)?.let { widgets.release(it.appWidgetId) }
             commit(placed.filterNot { it.item.key == p.item.key })
+        }
+
+        /** Window coordinates to the cell under them. */
+        fun cellAt(where: Offset): Pair<Int, Int> {
+            val local = where - rootPos
+            return (local.x / cellW).toInt().coerceIn(0, cols - 1) to
+                (local.y / cellH).toInt().coerceIn(0, rows - 1)
+        }
+
+        // The drawer drives the carry and the grid answers it. Everything here runs from
+        // the drawer's gesture rather than from a composition, which is why it writes to
+        // the same drag state the grid's own drags use: one carried thing at a time, one
+        // set of variables, one landing outline.
+        if (carry != null) {
+            DisposableEffect(carry, cellW, cellH, cols, rows, rootPos, live) {
+                carry.aim = { where ->
+                    val local = where - rootPos
+                    pointer = local
+                    val (tc, tr) = cellAt(where)
+                    dropCol = tc
+                    dropRow = tr
+                    // an app already on the home screen is allowed to land on itself
+                    val self = carry.app?.let { Item.App(it.packageName, it.activityName) }
+                    val mine = self?.let { me -> placed.firstOrNull { it.item.key == me.key } }
+                    dropOk = fitsHere(
+                        live,
+                        Placed(self ?: Item.Clock, pagerState.currentPage, tc, tr, 1, 1),
+                        cols, rows,
+                        mine?.item
+                    )
+                    edgeDir = when {
+                        local.x < wPx * 0.06f -> -1
+                        local.x > wPx * 0.94f -> 1
+                        else -> 0
+                    }
+                }
+                carry.put = { item, where ->
+                    val (tc, tr) = cellAt(where)
+                    val page = pagerState.currentPage
+                    val already = placed.firstOrNull { it.item.key == item.key }
+                    val room = fitsHere(
+                        live,
+                        Placed(item, page, tc, tr, 1, 1),
+                        cols, rows,
+                        already?.item
+                    )
+                    commit(
+                        when {
+                            // already on the home screen somewhere: this is a move
+                            already != null && room ->
+                                placed.map {
+                                    if (it.item.key == item.key) {
+                                        it.copy(page = page, col = tc, row = tr)
+                                    } else it
+                                }
+                            already != null -> placed
+                            room -> placed + Placed(item, page, tc, tr)
+                            // dropped on a taken cell: it still comes over, it just has
+                            // to find its own room rather than being thrown away
+                            else -> placed + Placed(item)
+                        }
+                    )
+                }
+                carry.drop = { edgeDir = 0 }
+                onDispose {
+                    carry.aim = null
+                    carry.put = null
+                    carry.drop = null
+                }
+            }
         }
 
         HorizontalPager(
@@ -258,8 +333,9 @@ fun HomeGrid(
                 // where the carried item would land
                 if (busy && sizeKey == null && page == pagerState.currentPage && folderOnto == null) {
                     val ink = LocalInk.current
-                    val dw = dragged?.w ?: traySpan.first
-                    val dh = dragged?.h ?: traySpan.second
+                    // an app off the drawer is always one cell; a widget brings its own size
+                    val dw = dragged?.w ?: if (coming != null) 1 else traySpan.first
+                    val dh = dragged?.h ?: if (coming != null) 1 else traySpan.second
                     Canvas(Modifier.fillMaxSize()) {
                         val inset = 6f
                         val at = Offset(dropCol * cellW + inset, dropRow * cellH + inset)

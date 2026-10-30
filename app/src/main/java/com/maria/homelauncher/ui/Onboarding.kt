@@ -229,6 +229,7 @@ private fun GettingAround(accent: Color) {
     Bullet("Swipe up for your apps", "Start the swipe from the middle of the screen, not the very bottom edge. That part belongs to Android.", accent)
     Bullet("Type to search", "The search bar finds any app, including ones you have hidden.", accent)
     Bullet("Long-press an app", "Add it to the dock, hide it, open app info, or uninstall it.", accent)
+    Bullet("Or keep going", "Hold an app and drag: it comes out of the drawer and you can drop it anywhere on the home screen, or in the dock. It stays in the drawer too.", accent)
     Bullet("Back does nothing on home", "That is deliberate. Home is the bottom of the stack.", accent)
     Bullet("The gear is your settings", "It sits next to the search bar.", accent)
 }
@@ -362,7 +363,7 @@ private fun Finish(accent: Color) {
     Spacer(Modifier.height(30.dp))
     Title("That is everything")
     Body("A few things worth knowing:")
-    Bullet("Wallpapers", "Settings can rotate through a folder of images on a timer, or just set one.", accent)
+    Bullet("Wallpapers", "Settings can rotate through a folder of pictures on a timer, or just set one. The lock screen can have a set of its own so the two never collide.", accent)
     Bullet("Hidden apps", "Long-press an app and hide it. It only appears when you search for it.", accent)
     Bullet("Stuck?", "Everything lives behind the gear next to the search bar, including this intro.", accent)
     Spacer(Modifier.height(8.dp))

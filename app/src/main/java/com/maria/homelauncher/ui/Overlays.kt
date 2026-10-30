@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.maria.homelauncher.LocalInk
 import com.maria.homelauncher.AppEntry
+import com.maria.homelauncher.Search
 import com.maria.homelauncher.Item
 import com.maria.homelauncher.GearSide
 import com.maria.homelauncher.LocalStyle
@@ -132,6 +133,7 @@ fun FolderOverlay(
 @Composable
 fun SearchOverlay(
     apps: List<AppEntry>,
+    uses: (String) -> Int,
     onLaunch: (AppEntry) -> Unit,
     onSettings: () -> Unit,
     onClose: () -> Unit
@@ -141,8 +143,7 @@ fun SearchOverlay(
     var query by remember { mutableStateOf("") }
 
     val hits = remember(apps, query) {
-        if (query.isBlank()) emptyList()
-        else apps.filter { it.label.contains(query, ignoreCase = true) }
+        if (query.isBlank()) emptyList() else Search.rank(apps, query, uses)
     }
 
     val bar = @Composable {

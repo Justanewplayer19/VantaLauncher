@@ -13,22 +13,42 @@ app, so it stays.
 - Dock of up to 5 favourite apps, persisted
 - Swipe up anywhere -> app drawer
 - Alphabetical app grid with live search
+- **Ranked search** -- tiers rather than a substring filter, best match first: the exact
+  name, then a prefix, then a word in the middle, then initials ("gm" for Google Maps),
+  then the query split across words ("gmaps", "ytmusic"), then anywhere inside, then one
+  typo's worth of slack ("instgram"), then loose letters in order, and the package name
+  last. Accents are folded, so "pokemon" finds "Pokemon GO". Ties go to the app you
+  actually open, then to the shorter name
 - Long-press an app -> dock, hide, app info, uninstall
 - **Hidden apps** -- kept out of the grid, only surface when you type in search
-- **Wallpaper rotation** -- pick individual images *or a whole folder* from anywhere on
+- **Wallpaper rotation** -- pick individual pictures *or a whole folder* from anywhere on
   the device, rotate on a timer, home / lock / both, optional shuffle, "Change now". A
   watched folder is re-read every time, so pictures added to it later join on their own
+- **A set per screen** -- "Give the lock screen its own pictures" splits the one set in
+  two, so the home screen and the lock screen never show each other's pictures. Each set
+  has its own files, its own watched folders and its own place in its list, and with two
+  sets "Both" means one picture from each at the same moment rather than one picture on
+  both. Off by default, and what you already had becomes the home set untouched
+- **A GIF or video in either set** -- Android only ever takes a still picture for the
+  system wallpaper, so a frame is taken out of it (a quarter of the way in, since clips
+  tend to open on black) and that frame is what goes on
 - **Animated background** -- a GIF or a video played behind the launcher, set to repeat or
   to play once and hold on its last frame
 - **Lock screen on every screen off** -- a different picture waiting each time the screen
-  comes back on, in order or at random, drawn from the same images and folders. The lock
-  screen only: the home wallpaper is left where it is
+  comes back on, in order or at random, drawn from the lock set when there is one and the
+  shared set when there is not. The lock screen only: the home wallpaper is left where it
+  is
 - **Home screen sound** -- an audio file played while the home screen is in front, with
   repeat and a volume. The file is copied into the app rather than played from where it
   sits, so a withdrawn permission or a cloud-backed provider cannot silence it later, and
   a Test button plays it on the spot and says why if it will not play. It mixes under
   whatever is already playing rather than pausing it, and stops the moment another app
   comes forward
+- **Drag an app out of the drawer** -- hold an icon in the drawer and keep going: the
+  drawer gets out of the way, the cell lattice comes up, and the app lands wherever you
+  let go, on any page or in the dock. The app stays in the drawer, since the drawer is
+  every app you have. Letting go without having moved opens the long-press menu instead,
+  the same as it always did
 - **Drawer folders** -- group apps inside the drawer, rename them, ungroup them. A search
   flattens them so an app is never hidden behind one
 - **Single wallpaper** -- set one image immediately without turning rotation on
@@ -264,6 +284,66 @@ what is in it.
 - A sideways swipe moves between home pages first, in either layout. The gesture only
   runs on a single page, where there is nothing to scroll to, and the settings page says
   so rather than offering a choice that quietly loses.
+
+### Search
+
+`Search.kt`, and it ranks rather than filters. A plain `label.contains(query)` is the
+version everybody writes first and it is wrong twice over: it misses things that
+obviously match ("gmaps" is not inside "Google Maps", "Pokemon" is not inside "Pokemon
+GO" once the accent is there), and when it does match it hands back whatever order the
+list was already in, so "ch" could put "Device Health Services" above "Chrome".
+
+- Matching is **tiered**, and the tier decides the order: exact name, name prefix, a word
+  in the middle starting with it, initials, the query split across consecutive words
+  starting at the first, anywhere inside, one edit's worth of typo, loose letters in
+  order, package name. Nothing fuzzy can climb above something solid.
+- The tiers are coarse on purpose: `tier * 1000` leaves room underneath for the
+  tie-breakers and no room for them to cross a boundary. Inside a tier it is how often you
+  have opened the app (`Prefs.uses`, capped so a favourite cannot become unbeatable), then
+  the shorter name, then alphabetically.
+- Names are folded with `Normalizer.NFD` and the combining marks dropped, so accents stop
+  mattering, and a second "tight" form with the punctuation removed is what the
+  contains-and-prefix checks use.
+- Words split on punctuation **and** on a lower-to-upper step, so "WhatsApp" and "YouTube"
+  are two words each and their initials work.
+- The typo tier is one Damerau-Levenshtein edit done without a matrix: with a budget of a
+  single edit there are only ever three ways to spend it, so it is one scan to the first
+  difference and then three comparisons. It only applies from four characters up, where
+  one edit is not most of the query.
+- Acronyms and loose matching need two characters, and loose matching has to start on a
+  word boundary, or a single letter would drag in everything that contains it.
+- `AppRepo.launch` is where a launch is counted, so every path into an app -- grid, dock,
+  folder, drawer, search -- counts the same.
+
+### Dragging out of the drawer
+
+The drawer and the grid are two composables with a panel between them, and a drag that
+starts in one and ends in the other needs something that outlives both ends of the
+gesture. `ui/CarryOut.kt` is that something: the drawer writes where the finger is, the
+grid reads it, and whoever lets go decides what happens.
+
+- Positions are **window** coordinates, the only frame of reference the two surfaces
+  share. The grid converts against its own `positionInWindow`.
+- The grid fills in `aim` and `put` while it is on screen and clears them when it leaves,
+  so a drag can only ever reach a grid that is really there. It registers them in a
+  `DisposableEffect`, which runs a frame after it appears, so a drop inside that gap falls
+  back to adding the app unplaced and letting the packer find it room.
+- **The home screen is composed while the drawer is open only during a carry.** It is
+  normally dropped entirely (`homeAlpha > 0f`), since the drawer covers it.
+- **The drawer stays in the tree while the carry runs, at alpha 0.** Taking the row
+  holding the finger out of the composition would cancel the gesture halfway across the
+  screen. The widget tray already works this way for the same reason.
+- A tile that can be carried cannot also use `combinedClickable`: its long press and the
+  drag detector's would both fire, so the menu would open underneath the icon you had
+  just picked up. The long press belongs to the drag, and the menu comes from letting go
+  without having moved, which is how the home grid has always behaved.
+- The carry only starts once the finger has travelled `CARRY_SLOP_DP`, so a hold that
+  wobbles is still a hold.
+- An empty dock has nothing to draw and so nothing to aim at. While something is in the
+  air it shows as an outline one icon wide, and reports its own bounds so a drop can tell
+  whether it landed there.
+- A hidden app dropped on the home screen is **unhidden**. `syncLayout` strips hidden apps
+  from the layout, so the alternative is an icon that vanishes a frame after it lands.
 
 ### Notification dots
 
@@ -510,9 +590,35 @@ there; the page says so rather than pretending otherwise.
   `wallpaperInfo != null` means clearing first.
 - The image is decoded to a bitmap and handed over with `setBitmap` rather than as a
   stream. Some skins quietly refuse a stream they cannot crop themselves; a bitmap gives
-  them nothing to refuse. `setStream` stays as the fallback when decoding fails.
+  them nothing to refuse. There is **no `setStream` fallback**: see below.
+- **A file we cannot read is a file to skip.** Handing the bytes over as a stream instead
+  looks like a kind fallback and is a trap -- the wallpaper service takes them, says yes,
+  throws the old picture away and then has nothing to draw, so the phone drops to its
+  stock default. `apply()` decodes first and gives up on that URI if it cannot, and the
+  caller moves to the next picture with the current one still up.
+- **`setBitmap` returning is not proof.** `getWallpaperId(flag)` is, so every set is
+  checked against the id it had before, retried once if it did not move, and reported as
+  a failure if it still did not. When nothing in a set would go on, the last picture that
+  did is put back rather than leaving the default showing.
+- **Two sets, three cursors.** `Prefs.cursor` is the home set's place, `rotateLockCursor`
+  is the timed rotation's place in the lock set, and `lockCursor` is the screen-off
+  change's place in it. They look like a lot until you notice they are three different
+  jobs: sharing any two means one driver skipping pictures another already used.
+  `lastLock` is the lock set's own "last good picture", since the home one is not a
+  sensible thing to put on the lock screen when a change fails.
+- `Wallpaper.sources(ctx, target)` answers for one screen. The lock screen gets its own
+  set only when `lockSeparate` is on, and otherwise the home set, which is exactly how it
+  behaved when there was only one set.
+- A video in a set goes through `MediaMetadataRetriever` for a frame; a GIF or animated
+  WebP decodes to its first frame through `BitmapFactory` on its own. A folder scan lets
+  `video/*` through for the same reason.
 
 ### Animated background
+
+This is the home screen's alone, and that is a platform limit rather than a choice: the
+launcher can only draw in its own window, and the lock screen is not it. A moving lock
+screen needs a live wallpaper service, which is a different app shape entirely. What the
+lock screen can have is a frame out of a GIF or a video, which is what the sets above do.
 
 A moving background cannot be the system wallpaper. `WallpaperManager` takes a bitmap, so
 the alternatives are a live wallpaper service or a layer the launcher draws itself.
@@ -531,8 +637,9 @@ costs nothing the moment another app is in front.
 - A TextureView stretches its content to its own shape, so `cropToFill` scales the larger
   way and lets the overflow fall off the edges, the way a wallpaper does.
 - Both halves stop on `ON_PAUSE` and start again on `ON_RESUME`.
-- "Choose a wallpaper" applies one image right away via `Wallpaper.setOne`, independent of
-  the rotation list, using the same Apply-to target.
+- "Choose a wallpaper" applies one picture right away via `Wallpaper.setOne`, independent
+  of the rotation and of the sets, with Home / Lock / Both chosen right above the button
+  rather than borrowed from the rotation's Apply-to.
 - Rotation runs on WorkManager. **15 minutes is Android's floor** for periodic background
   work -- anything shorter needs a foreground service.
 - Lock screen uses `WallpaperManager.FLAG_LOCK`. Some OEM skins block this; stock Android

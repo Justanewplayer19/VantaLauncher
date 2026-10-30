@@ -92,6 +92,18 @@ class Prefs(ctx: Context) {
         hidden = cur
     }
 
+    // --- search ---
+
+    /**
+     * How many times a package has been opened from the launcher. Search uses it to break
+     * ties, so the Chrome you open daily sits above the browser you have never touched.
+     */
+    fun uses(pkg: String): Int = sp.getInt("use:$pkg", 0)
+
+    fun noteLaunch(pkg: String) {
+        sp.edit().putInt("use:$pkg", (uses(pkg) + 1).coerceAtMost(999)).apply()
+    }
+
     // --- gestures ---
 
     /**
@@ -117,7 +129,12 @@ class Prefs(ctx: Context) {
 
     // --- wallpaper rotation ---
 
-    /** Content URIs the user picked, as strings. Persistable permission is taken on each. */
+    /**
+     * Content URIs the user picked, as strings. Persistable permission is taken on each.
+     *
+     * This is the home set. It kept its old key on purpose: it was the only set there
+     * used to be, so an existing setup becomes the home set without being touched.
+     */
     var wallpapers: List<String>
         get() = list("wallpapers")
         set(v) = putList("wallpapers", v)
@@ -131,7 +148,30 @@ class Prefs(ctx: Context) {
         get() = list("wallpaperFolders")
         set(v) = putList("wallpaperFolders", v)
 
-    /** A GIF or video drawn behind the launcher. Blank when there is none. */
+    /**
+     * The lock screen's own images and folders, used only when [lockSeparate] is on.
+     *
+     * Two sets rather than one list with a flag on each entry: picking is the thing you
+     * actually do, and "add these to the lock screen" is one gesture against a set where
+     * it would be an edit of every row against a tagged list.
+     */
+    var lockWallpapers: List<String>
+        get() = list("lockWallpapers")
+        set(v) = putList("lockWallpapers", v)
+
+    var lockWallpaperFolders: List<String>
+        get() = list("lockWallpaperFolders")
+        set(v) = putList("lockWallpaperFolders", v)
+
+    /**
+     * Off means both screens draw from the home set, which is how it worked when there
+     * was only one. On gives the lock screen the set above, and the two never collide.
+     */
+    var lockSeparate: Boolean
+        get() = sp.getBoolean("lockSeparate", false)
+        set(v) = sp.edit().putBoolean("lockSeparate", v).apply()
+
+    /** A GIF or video drawn behind the home screen. Blank when there is none. */
     var liveBg: String
         get() = sp.getString("liveBg", "")!!
         set(v) = sp.edit().putString("liveBg", v).apply()
@@ -208,7 +248,25 @@ class Prefs(ctx: Context) {
         get() = sp.getString("lastWallpaper", "")!!
         set(v) = sp.edit().putString("lastWallpaper", v).apply()
 
+    /**
+     * The last picture that went on the lock screen. With two sets, the home one is no
+     * longer a sensible thing to put back when a lock change fails.
+     */
+    var lastLock: String
+        get() = sp.getString("lastLock", "")!!
+        set(v) = sp.edit().putString("lastLock", v).apply()
+
     var cursor: Int
         get() = sp.getInt("cursor", 0)
         set(v) = sp.edit().putInt("cursor", v).apply()
+
+    /**
+     * The timed rotation's place in the lock set. Three cursors looks like a lot until
+     * you notice all three are different jobs: the home set, the lock set on a timer, and
+     * the lock set on every screen off. Sharing any two of them means one driver skipping
+     * pictures the other already used.
+     */
+    var rotateLockCursor: Int
+        get() = sp.getInt("rotateLockCursor", 0)
+        set(v) = sp.edit().putInt("rotateLockCursor", v).apply()
 }

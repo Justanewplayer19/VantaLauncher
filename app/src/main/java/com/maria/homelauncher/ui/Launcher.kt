@@ -42,6 +42,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -83,11 +89,14 @@ import com.maria.homelauncher.LocalStyle
 import com.maria.homelauncher.NotificationWatch
 import com.maria.homelauncher.LauncherWidgets
 import com.maria.homelauncher.Prefs
+import com.maria.homelauncher.Search
 import com.maria.homelauncher.StyleStore
 import com.maria.homelauncher.Style
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -145,6 +154,9 @@ fun LauncherRoot(
         mutableStateOf(prefs.gSwipeLeft != Gestures.NONE || prefs.gSwipeRight != Gestures.NONE)
     }
     var pendingSpot by remember { mutableStateOf<Placed?>(null) }
+    // an app being dragged out of the drawer, and where the dock is so a drop can tell
+    val carry = remember { CarryOut() }
+    var dockRect by remember { mutableStateOf(Rect.Zero) }
     val scope = rememberCoroutineScope()
 
     fun commit(next: List<Placed>) {
@@ -179,6 +191,35 @@ fun LauncherRoot(
         settingsOpen = false
         settingsAt = null
         reread()
+    }
+
+    /**
+     * The end of a drag out of the drawer. The dock gets it if that is where the finger
+     * was, and the grid gets it everywhere else.
+     */
+    fun land() {
+        val a = carry.app ?: return
+        val where = carry.at
+        // asking for a hidden app on the home screen is asking for it not to be hidden
+        if (a.packageName in hidden) {
+            prefs.toggleHidden(a.packageName)
+            hidden = prefs.hidden
+        }
+        if (dockRect.contains(where)) {
+            if (a.packageName !in dock && dock.size < style.dockMax) {
+                prefs.toggleDock(a.packageName, style.dockMax)
+                dock = prefs.dock
+            }
+        } else {
+            val item = Item.App(a.packageName, a.activityName)
+            // the grid registers its hooks a frame after it appears, so a drop that
+            // happens in that gap still lands, just wherever there is room
+            val place = carry.put
+            if (place != null) place(item, where) else commit(layout + Placed(item))
+        }
+        carry.app = null
+        carry.drop?.invoke()
+        setDrawerOpen(false)
     }
 
     fun commitFolders(next: List<DrawerFolder>) {
@@ -293,8 +334,16 @@ fun LauncherRoot(
         // home screen is the thing in front
         HomeAudio(audio, audioLoop, audioVolume)
 
-        if (homeAlpha > 0f) {
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {
+        // The drawer covers the home screen, so normally it is not composed at all while
+        // the drawer is open. A carry needs it there to aim at, and lit, since that is
+        // what you are looking at once the drawer gets out of the way.
+        val carrying = carry.app != null
+        if (homeAlpha > 0f || carrying) {
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    alpha = if (carrying) 1f else homeAlpha
+                }
+            ) {
                 val grid = @Composable { modifier: Modifier ->
                     HomeGrid(
                         placed = layout,
@@ -327,6 +376,7 @@ fun LauncherRoot(
                         // can be taken off it; on one surface every app lives here and
                         // removing one would only mean hiding it
                         canRemoveApps = !single,
+                        carry = carry,
                         modifier = modifier
                     )
                 }
@@ -341,6 +391,8 @@ fun LauncherRoot(
                     HomeScreen(
                         apps = apps,
                         dock = dock,
+                        carrying = carrying,
+                        onDockBounds = { dockRect = it },
                         grid = grid,
                         onLaunch = repo::launch,
                         onOpenDrawer = { setDrawerOpen(true) },
@@ -348,6 +400,23 @@ fun LauncherRoot(
                     )
                 }
             }
+        }
+
+        carry.app?.let { a ->
+            val half = with(LocalDensity.current) { (style.iconDp.dp / 2).toPx() }
+            Image(
+                bitmap = a.icon,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            (carry.at.x - half).roundToInt(),
+                            (carry.at.y - half).roundToInt()
+                        )
+                    }
+                    .size(style.iconDp.dp)
+            )
         }
 
         AnimatedVisibility(
@@ -358,15 +427,24 @@ fun LauncherRoot(
             if (single) {
                 SearchOverlay(
                     apps = apps,
+                    uses = prefs::uses,
                     onLaunch = { setDrawerOpen(false); repo.launch(it) },
                     onSettings = { settingsOpen = true },
                     onClose = { setDrawerOpen(false) }
                 )
             } else {
+                // Kept in the tree while an app is being carried out of it, only
+                // invisible: taking the row holding the finger out of the composition
+                // would cancel the drag halfway across the screen.
                 AppDrawer(
+                    modifier = Modifier.graphicsLayer { alpha = if (carrying) 0f else 1f },
                     apps = apps,
                     dock = dock,
                     hidden = hidden,
+                    uses = prefs::uses,
+                    onCarryStart = { app, where -> carry.begin(app, where) },
+                    onCarryMove = { where -> carry.moveTo(where) },
+                    onCarryEnd = { land() },
                     onLaunch = { setDrawerOpen(false); repo.launch(it) },
                     onInfo = repo::openInfo,
                     onUninstall = repo::uninstall,
@@ -576,6 +654,9 @@ private enum class Direction { Up, Down }
 
 private const val SWIPE_THRESHOLD_DP = 72
 
+/** How far a long press has to travel before the app comes out of the drawer. */
+private const val CARRY_SLOP_DP = 18
+
 /**
  * Vertical swipe that ignores drags starting inside the system gesture zone, so the
  * nav bar's own swipe-up keeps working. Accumulates distance rather than reacting to a
@@ -693,6 +774,9 @@ private fun Modifier.homeGestures(
 private fun HomeScreen(
     apps: List<AppEntry>,
     dock: List<String>,
+    /** True while an app is in the air, which is when the dock has to be a target. */
+    carrying: Boolean,
+    onDockBounds: (Rect) -> Unit,
     grid: @Composable (Modifier) -> Unit,
     onLaunch: (AppEntry) -> Unit,
     onOpenDrawer: () -> Unit,
@@ -723,13 +807,17 @@ private fun HomeScreen(
         val byPkg = apps.associateBy { it.packageName }
         val dockApps = dock.mapNotNull { byPkg[it] }.take(style.dockMax)
 
-        if (dockApps.isNotEmpty()) {
+        // An empty dock has nothing to draw and so nothing to aim at, which makes the
+        // first app impossible to put there. While something is being carried it shows
+        // as an outline instead, the size of one icon.
+        if (dockApps.isNotEmpty() || carrying) {
             Row(
                 modifier = Modifier
+                    .onGloballyPositioned { onDockBounds(it.boundsInWindow()) }
                     .then(
-                        if (style.dockBg) Modifier
+                        if (style.dockBg || carrying) Modifier
                             .clip(RoundedCornerShape(style.dockRadius.dp))
-                            .background(LocalInk.current.copy(alpha = 0.10f))
+                            .background(LocalInk.current.copy(alpha = if (carrying) 0.18f else 0.10f))
                         else Modifier
                     )
                     .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -737,6 +825,9 @@ private fun HomeScreen(
             ) {
                 dockApps.forEach { app ->
                     AppTile(app = app, showLabel = false, onClick = { onLaunch(app) })
+                }
+                if (carrying && dockApps.isEmpty()) {
+                    Box(Modifier.size(style.iconDp.dp))
                 }
             }
         }
@@ -756,9 +847,15 @@ private fun HomeScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppDrawer(
+    modifier: Modifier,
     apps: List<AppEntry>,
     dock: List<String>,
     hidden: Set<String>,
+    uses: (String) -> Int,
+    /** Long press and keep going: the app comes out and the drawer gets out of the way. */
+    onCarryStart: (AppEntry, Offset) -> Unit,
+    onCarryMove: (Offset) -> Unit,
+    onCarryEnd: () -> Unit,
     onLaunch: (AppEntry) -> Unit,
     onInfo: (AppEntry) -> Unit,
     onUninstall: (AppEntry) -> Unit,
@@ -811,7 +908,7 @@ private fun AppDrawer(
     // Hidden apps stay out of the grid, but a search still finds them.
     val shown = remember(apps, query, hidden) {
         if (query.isBlank()) apps.filter { it.packageName !in hidden }
-        else apps.filter { it.label.contains(query, ignoreCase = true) }
+        else Search.rank(apps, query, uses)
     }
 
     // Folders group the list, so a search flattens them again: looking for an app by name
@@ -825,7 +922,7 @@ private fun AppDrawer(
     var pickFolderFor by remember { mutableStateOf<AppEntry?>(null) }
 
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(panelColor(style))
             .systemBarsPadding()
@@ -853,7 +950,10 @@ private fun AppDrawer(
                         onLaunch = onLaunch,
                         onOpenFolder = onOpenFolder,
                         onAppMenu = { sheetFor = it },
-                        onFolderMenu = { folderSheet = it }
+                        onFolderMenu = { folderSheet = it },
+                        onCarryStart = onCarryStart,
+                        onCarryMove = onCarryMove,
+                        onCarryEnd = onCarryEnd
                     )
                 }
             }
@@ -864,7 +964,10 @@ private fun AppDrawer(
                 onLaunch = onLaunch,
                 onOpenFolder = onOpenFolder,
                 onAppMenu = { sheetFor = it },
-                onFolderMenu = { folderSheet = it }
+                onFolderMenu = { folderSheet = it },
+                onCarryStart = onCarryStart,
+                onCarryMove = onCarryMove,
+                onCarryEnd = onCarryEnd
             )
         }
         }
@@ -958,7 +1061,10 @@ private fun DrawerTile(
     onLaunch: (AppEntry) -> Unit,
     onOpenFolder: (Item.Folder) -> Unit,
     onAppMenu: (AppEntry) -> Unit,
-    onFolderMenu: (Item.Folder) -> Unit
+    onFolderMenu: (Item.Folder) -> Unit,
+    onCarryStart: ((AppEntry, Offset) -> Unit)? = null,
+    onCarryMove: ((Offset) -> Unit)? = null,
+    onCarryEnd: (() -> Unit)? = null
 ) {
     val style = LocalStyle.current
     when (cell) {
@@ -966,7 +1072,10 @@ private fun DrawerTile(
             app = cell.app,
             showLabel = style.showLabels,
             onClick = { onLaunch(cell.app) },
-            onLongClick = { onAppMenu(cell.app) }
+            onLongClick = { onAppMenu(cell.app) },
+            onCarryStart = onCarryStart?.let { go -> { where: Offset -> go(cell.app, where) } },
+            onCarryMove = onCarryMove,
+            onCarryEnd = onCarryEnd
         )
 
         is DrawerCell.Group -> Box(
@@ -1075,14 +1184,68 @@ private fun AppTile(
     app: AppEntry,
     showLabel: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    /**
+     * Set where the tile can be dragged off the surface it is on. Window coordinates.
+     *
+     * A tile that can be carried cannot also use `combinedClickable`: its long press and
+     * the drag detector's would both fire, so the menu would open underneath the icon
+     * you had just picked up. The long press belongs to the drag, and the menu comes
+     * from letting go without having moved, which is how the home grid has always
+     * behaved.
+     */
+    onCarryStart: ((Offset) -> Unit)? = null,
+    onCarryMove: ((Offset) -> Unit)? = null,
+    onCarryEnd: (() -> Unit)? = null
 ) {
     val style = LocalStyle.current
+    val density = LocalDensity.current
+    var origin by remember { mutableStateOf(Offset.Zero) }
+
+    val touch = if (onCarryStart == null) {
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    } else {
+        Modifier
+            .pointerInput(app.packageName) {
+                detectTapGestures(onTap = { onClick() })
+            }
+            .pointerInput(app.packageName) {
+                var moved = 0f
+                var lifted = false
+                var at = Offset.Zero
+                val slop = with(density) { CARRY_SLOP_DP.dp.toPx() }
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { inTile ->
+                        moved = 0f
+                        lifted = false
+                        at = origin + inTile
+                    },
+                    onDrag = { change, delta ->
+                        change.consume()
+                        moved += abs(delta.x) + abs(delta.y)
+                        at += delta
+                        // the drawer only gets out of the way once this is clearly a
+                        // carry rather than a hold that wobbled
+                        if (!lifted && moved >= slop) {
+                            lifted = true
+                            onCarryStart(at)
+                        } else if (lifted) {
+                            onCarryMove?.invoke(at)
+                        }
+                    },
+                    onDragEnd = {
+                        if (lifted) onCarryEnd?.invoke() else onLongClick?.invoke()
+                    },
+                    onDragCancel = { if (lifted) onCarryEnd?.invoke() }
+                )
+            }
+    }
 
     Column(
         modifier = Modifier
+            .onGloballyPositioned { origin = it.positionInWindow() }
             .clip(RoundedCornerShape(18.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .then(touch)
             .padding(vertical = 6.dp, horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1292,6 +1455,9 @@ private fun ungroup(items: List<Placed>, folderId: String): List<Placed> {
 private fun PagedAppGrid(
     cells: List<DrawerCell>,
     iconOf: (Item.App) -> AppEntry?,
+    onCarryStart: ((AppEntry, Offset) -> Unit)? = null,
+    onCarryMove: ((Offset) -> Unit)? = null,
+    onCarryEnd: (() -> Unit)? = null,
     onLaunch: (AppEntry) -> Unit,
     onOpenFolder: (Item.Folder) -> Unit,
     onAppMenu: (AppEntry) -> Unit,
@@ -1330,7 +1496,10 @@ private fun PagedAppGrid(
                                         onLaunch = onLaunch,
                                         onOpenFolder = onOpenFolder,
                                         onAppMenu = onAppMenu,
-                                        onFolderMenu = onFolderMenu
+                                        onFolderMenu = onFolderMenu,
+                                        onCarryStart = onCarryStart,
+                                        onCarryMove = onCarryMove,
+                                        onCarryEnd = onCarryEnd
                                     )
                                 }
                             }

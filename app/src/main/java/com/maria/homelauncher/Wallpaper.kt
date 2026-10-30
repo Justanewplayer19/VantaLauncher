@@ -4,6 +4,7 @@ import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.work.Constraints
@@ -21,12 +22,21 @@ private const val WORK_NAME = "wallpaper-rotate"
 object Wallpaper {
 
     /**
-     * Applies the next image in the list. Returns false if there was nothing usable --
-     * empty list, or every URI failed (revoked permission, deleted file).
+     * Applies the next image. Returns false if there was nothing usable -- empty set, or
+     * every URI failed (revoked permission, deleted file).
      */
     suspend fun advance(ctx: Context): Boolean = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
-        step(ctx, prefs.rotateTarget, prefs.shuffle, prefs.cursor, true) { prefs.cursor = it }
+        val target = prefs.rotateTarget
+        // With a set each, "both" stops meaning one picture on two screens and starts
+        // meaning one from each, which is the entire point of keeping them apart.
+        if (target == TARGET_BOTH && prefs.lockSeparate) {
+            val home = stepFor(ctx, prefs, TARGET_HOME, prefs.shuffle)
+            val lock = stepFor(ctx, prefs, TARGET_LOCK, prefs.shuffle)
+            home || lock
+        } else {
+            stepFor(ctx, prefs, target, prefs.shuffle)
+        }
     }
 
     /**
@@ -38,7 +48,30 @@ object Wallpaper {
      */
     suspend fun advanceLock(ctx: Context): Boolean = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
-        step(ctx, TARGET_LOCK, prefs.lockRandom, prefs.lockCursor, false) { prefs.lockCursor = it }
+        step(
+            ctx = ctx,
+            uris = sources(ctx, TARGET_LOCK),
+            target = TARGET_LOCK,
+            random = prefs.lockRandom,
+            from = prefs.lockCursor,
+            record = false
+        ) { prefs.lockCursor = it }
+    }
+
+    /** One target of the timed rotation, against whichever set belongs to it. */
+    private fun stepFor(ctx: Context, prefs: Prefs, target: Int, random: Boolean): Boolean {
+        val own = target == TARGET_LOCK && prefs.lockSeparate
+        return step(
+            ctx = ctx,
+            uris = sources(ctx, target),
+            target = target,
+            random = random,
+            from = if (own) prefs.rotateLockCursor else prefs.cursor,
+            // the accent sampler follows the picture on the home screen; a lock set of
+            // its own is not that picture and has no business repainting the launcher
+            record = !own,
+            save = { if (own) prefs.rotateLockCursor = it else prefs.cursor = it }
+        )
     }
 
     /**
@@ -47,20 +80,22 @@ object Wallpaper {
      */
     private fun step(
         ctx: Context,
+        uris: List<String>,
         target: Int,
         random: Boolean,
         from: Int,
         record: Boolean,
         save: (Int) -> Unit
     ): Boolean {
-        val uris = sources(ctx)
         if (uris.isEmpty()) return false
+        val prefs = Prefs(ctx)
 
         val start = if (random) uris.indices.random() else from.coerceAtLeast(0) % uris.size
         for (n in uris.indices) {
             val i = (start + n) % uris.size
             if (apply(ctx, Uri.parse(uris[i]), target, record)) {
                 save((i + 1) % uris.size)
+                if (target == TARGET_LOCK) prefs.lastLock = uris[i]
                 return true
             }
         }
@@ -68,21 +103,30 @@ object Wallpaper {
         // Nothing in the list would go on. Put the last picture that did back, rather
         // than leaving the phone showing the stock default: clearing a live wallpaper is
         // what exposes that default, and a half-done change is worse than no change.
-        val last = Prefs(ctx).lastWallpaper
+        val last = if (target == TARGET_LOCK) {
+            prefs.lastLock.ifBlank { prefs.lastWallpaper }
+        } else {
+            prefs.lastWallpaper
+        }
         if (last.isNotBlank()) runCatching { apply(ctx, Uri.parse(last), target, false) }
         return false
     }
 
     /**
-     * Everything the rotation can currently choose from: the individually picked images,
-     * plus whatever is in the picked folders *right now*. Reading the folders on every
-     * change is the point: a picture added to one afterwards joins the rotation on its
-     * own, where a list captured at pick time would have gone stale.
+     * Everything the rotation can currently choose from for one screen: the individually
+     * picked files, plus whatever is in the picked folders *right now*. Reading the
+     * folders on every change is the point: a picture added to one afterwards joins the
+     * rotation on its own, where a list captured at pick time would have gone stale.
+     *
+     * The lock screen answers from its own set when it has been given one, and otherwise
+     * from the home set, which is how it behaved when there was only one set.
      */
-    fun sources(ctx: Context): List<String> {
+    fun sources(ctx: Context, target: Int = TARGET_HOME): List<String> {
         val prefs = Prefs(ctx)
-        val fromFolders = prefs.wallpaperFolders.flatMap { imagesIn(ctx, Uri.parse(it)) }
-        return (prefs.wallpapers + fromFolders).distinct()
+        val own = target == TARGET_LOCK && prefs.lockSeparate
+        val files = if (own) prefs.lockWallpapers else prefs.wallpapers
+        val folders = if (own) prefs.lockWallpaperFolders else prefs.wallpaperFolders
+        return (files + folders.flatMap { imagesIn(ctx, Uri.parse(it)) }).distinct()
     }
 
     /** Applies one image immediately, outside the rotation. */
@@ -90,8 +134,12 @@ object Wallpaper {
         withContext(Dispatchers.IO) { apply(ctx, uri, target) }
 
     /**
-     * Every image directly inside a picked folder. The tree permission covers the children,
-     * so these URIs keep working after a reboot like individually picked files do.
+     * Every picture directly inside a picked folder, videos included. The tree permission
+     * covers the children, so these URIs keep working after a reboot like individually
+     * picked files do.
+     *
+     * Videos and GIFs are allowed here because the wallpaper is allowed to come from one:
+     * a still frame is taken out of it. See [decode].
      */
     fun imagesIn(ctx: Context, tree: Uri): List<String> {
         val docId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull()
@@ -111,7 +159,7 @@ object Wallpaper {
                 while (c.moveToNext()) {
                     val id = c.getString(0)
                     val mime = c.getString(1) ?: continue
-                    if (!mime.startsWith("image/")) continue
+                    if (!mime.startsWith("image/") && !mime.startsWith("video/")) continue
                     out += DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()
                 }
             }
@@ -185,11 +233,50 @@ object Wallpaper {
     }
 
     /**
+     * One still picture out of whatever was picked.
+     *
+     * A GIF or an animated WebP decodes to its first frame on its own, which is all the
+     * system wallpaper can hold: `WallpaperManager` takes a bitmap and nothing else, so
+     * there is no such thing as a moving lock screen short of writing a live wallpaper
+     * service. A video gets the same treatment through a frame grab rather than being
+     * refused, since "use that clip on my lock screen" is a reasonable thing to want and
+     * one frame of it is the honest answer.
+     *
+     * The launcher's own animated background is the separate thing that really does move,
+     * and it only moves on the home screen, because that is the one surface the launcher
+     * draws itself.
+     */
+    private fun decode(ctx: Context, uri: Uri): Bitmap? =
+        if (looksLikeVideo(ctx, uri)) frame(ctx, uri) else still(ctx, uri)
+
+    private fun looksLikeVideo(ctx: Context, uri: Uri): Boolean {
+        val mime = runCatching { ctx.contentResolver.getType(uri) }.getOrNull()
+        if (mime != null) return mime.startsWith("video/")
+        return Regex("\\.(mp4|webm|mkv|3gp|m4v|mov)$", RegexOption.IGNORE_CASE)
+            .containsMatchIn(uri.toString())
+    }
+
+    /** A frame from somewhere a little way in, since clips often open on black. */
+    private fun frame(ctx: Context, uri: Uri): Bitmap? = runCatching {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(ctx, uri)
+            val ms = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            val at = (ms / 4).coerceAtLeast(0L) * 1000
+            (r.getFrameAtTime(at) ?: r.frameAtTime)
+                ?.takeIf { it.width > 0 && it.height > 0 }
+        } finally {
+            runCatching { r.release() }
+        }
+    }.getOrNull()
+
+    /**
      * The picture at roughly the size of the screen. A full-resolution photo is both a
      * waste and a way to be killed for using too much memory, and the wallpaper service
      * scales whatever it is given anyway.
      */
-    private fun decode(ctx: Context, uri: Uri): Bitmap? = runCatching {
+    private fun still(ctx: Context, uri: Uri): Bitmap? = runCatching {
         val metrics = ctx.resources.displayMetrics
         val want = maxOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
 
@@ -214,7 +301,9 @@ object Wallpaper {
         val prefs = Prefs(ctx)
         val wm = WorkManager.getInstance(ctx)
 
-        if (!prefs.rotateOn || sources(ctx).isEmpty()) {
+        val anything = sources(ctx, prefs.rotateTarget).isNotEmpty() ||
+            (prefs.rotateTarget == TARGET_BOTH && sources(ctx, TARGET_LOCK).isNotEmpty())
+        if (!prefs.rotateOn || !anything) {
             wm.cancelUniqueWork(WORK_NAME)
             return
         }
