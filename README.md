@@ -49,6 +49,10 @@ app, so it stays.
   let go, on any page or in the dock. The app stays in the drawer, since the drawer is
   every app you have. Letting go without having moved opens the long-press menu instead,
   the same as it always did
+- **The dock is draggable both ways** -- hold a dock icon and pull it onto the home screen
+  to take it out, drag it along the row to reorder it, or drag any home screen icon down
+  into the dock to put it there. Unlike the drawer, dragging out of the dock takes it out:
+  the dock is a short list you chose, not a list of everything
 - **Drawer folders** -- group apps inside the drawer, rename them, ungroup them. A search
   flattens them so an app is never hidden behind one
 - **Single wallpaper** -- set one image immediately without turning rotation on
@@ -314,6 +318,31 @@ list was already in, so "ch" could put "Device Health Services" above "Chrome".
   word boundary, or a single letter would drag in everything that contains it.
 - `AppRepo.launch` is where a launch is counted, so every path into an app -- grid, dock,
   folder, drawer, search -- counts the same.
+
+### The dock as a source and a target
+
+The dock used to be the one surface you could only fill from a menu. It is now both ends
+of a drag, on the same machinery as the drawer (`CarryOut`), with `fromDock` as the only
+thing that distinguishes them. That flag is what makes the dock behave unlike the drawer:
+dragging out of the drawer leaves the app in the drawer, because the drawer is every app
+you own, while dragging out of the dock takes it out, because the dock is a short list you
+picked.
+
+- **The band is the target, not the icons.** Reporting the row's own bounds made the drop
+  zone exactly as wide as whatever was already in the dock, so the emptier the dock, the
+  harder it was to put anything in it. That is backwards. A full-width box around the row
+  reports the bounds, and lights up while something is in the air.
+- **Position in the row decides the slot.** Each tile reports the x of its own middle, and
+  a drop goes in after however many middles it is past. Dropping a dock icon back on the
+  dock is a reorder, which is why a full dock is no reason to refuse one that is already
+  in it.
+- **The lifted tile goes to alpha 0 but keeps its place**, so the row does not collapse
+  and reshuffle under the finger mid-drag.
+- The grid hides its landing outline while the finger is over the dock, since nothing is
+  landing on the grid in that moment and the outline would be a lie.
+- **A drop the dock will not take still lands.** A full dock sends the app to the grid
+  instead; dropping it on the floor would be a drag that did nothing and said nothing
+  about why.
 
 ### Dragging out of the drawer
 

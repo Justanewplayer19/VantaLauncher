@@ -157,6 +157,8 @@ fun LauncherRoot(
     // an app being dragged out of the drawer, and where the dock is so a drop can tell
     val carry = remember { CarryOut() }
     var dockRect by remember { mutableStateOf(Rect.Zero) }
+    // the middle of each dock tile, so a drop on the dock knows where in the row it went
+    val dockMid = remember { mutableStateMapOf<String, Float>() }
     val scope = rememberCoroutineScope()
 
     fun commit(next: List<Placed>) {
@@ -197,27 +199,47 @@ fun LauncherRoot(
      * The end of a drag out of the drawer. The dock gets it if that is where the finger
      * was, and the grid gets it everywhere else.
      */
+    /** Puts [pkg] in the dock at whichever slot [x] fell in. */
+    fun dockAt(pkg: String, x: Float) {
+        val others = dock.filterNot { it == pkg }
+        // how many tiles the finger is past, which is the slot it belongs in
+        val at = others.count { (dockMid[it] ?: Float.MAX_VALUE) < x }.coerceIn(0, others.size)
+        prefs.dock = others.toMutableList().apply { add(at, pkg) }.take(style.dockMax)
+        dock = prefs.dock
+    }
+
     fun land() {
         val a = carry.app ?: return
         val where = carry.at
+        val outOfDock = carry.fromDock
         // asking for a hidden app on the home screen is asking for it not to be hidden
         if (a.packageName in hidden) {
             prefs.toggleHidden(a.packageName)
             hidden = prefs.hidden
         }
-        if (dockRect.contains(where)) {
-            if (a.packageName !in dock && dock.size < style.dockMax) {
-                prefs.toggleDock(a.packageName, style.dockMax)
+        // one already in the dock is only moving along the row, so a full dock is no
+        // reason to refuse it
+        val roomInDock = outOfDock || a.packageName in dock || dock.size < style.dockMax
+        val tookIt = dockRect.contains(where) && roomInDock
+        if (tookIt) {
+            dockAt(a.packageName, where.x)
+        } else {
+            if (outOfDock) {
+                prefs.dock = dock.filterNot { it == a.packageName }
                 dock = prefs.dock
             }
-        } else {
             val item = Item.App(a.packageName, a.activityName)
-            // the grid registers its hooks a frame after it appears, so a drop that
-            // happens in that gap still lands, just wherever there is room
+            // A drop the dock would not take still has to go somewhere. Dropping it on
+            // the floor would mean a drag that did nothing and said nothing about why.
+            //
+            // The grid registers its hooks a frame after it appears, so a drop inside
+            // that gap lands too, just wherever there is room rather than under the
+            // finger.
             val place = carry.put
             if (place != null) place(item, where) else commit(layout + Placed(item))
         }
         carry.app = null
+        carry.fromDock = false
         carry.drop?.invoke()
         setDrawerOpen(false)
     }
@@ -377,6 +399,16 @@ fun LauncherRoot(
                         // removing one would only mean hiding it
                         canRemoveApps = !single,
                         carry = carry,
+                        dockRect = dockRect,
+                        onToDock = { item, x ->
+                            // a full dock turns it down, and the icon stays where it was
+                            if (dock.size >= style.dockMax && item.pkg !in dock) {
+                                false
+                            } else {
+                                dockAt(item.pkg, x)
+                                true
+                            }
+                        },
                         modifier = modifier
                     )
                 }
@@ -392,7 +424,12 @@ fun LauncherRoot(
                         apps = apps,
                         dock = dock,
                         carrying = carrying,
+                        lifted = carry.app?.packageName?.takeIf { carry.fromDock },
                         onDockBounds = { dockRect = it },
+                        onDockSlot = { pkg, mid -> dockMid[pkg] = mid },
+                        onCarryStart = { app, where -> carry.begin(app, where, outOfDock = true) },
+                        onCarryMove = { where -> carry.moveTo(where) },
+                        onCarryEnd = { land() },
                         grid = grid,
                         onLaunch = repo::launch,
                         onOpenDrawer = { setDrawerOpen(true) },
@@ -776,7 +813,13 @@ private fun HomeScreen(
     dock: List<String>,
     /** True while an app is in the air, which is when the dock has to be a target. */
     carrying: Boolean,
+    /** The package being carried out of the dock, so its own tile gets out of the way. */
+    lifted: String?,
     onDockBounds: (Rect) -> Unit,
+    onDockSlot: (String, Float) -> Unit,
+    onCarryStart: (AppEntry, Offset) -> Unit,
+    onCarryMove: (Offset) -> Unit,
+    onCarryEnd: () -> Unit,
     grid: @Composable (Modifier) -> Unit,
     onLaunch: (AppEntry) -> Unit,
     onOpenDrawer: () -> Unit,
@@ -811,24 +854,59 @@ private fun HomeScreen(
         // first app impossible to put there. While something is being carried it shows
         // as an outline instead, the size of one icon.
         if (dockApps.isNotEmpty() || carrying) {
-            Row(
-                modifier = Modifier
+            // The band, not the icons, is what a drop aims at. Reporting the row itself
+            // made the target exactly as wide as whatever was already in the dock, so
+            // the emptier the dock the harder it was to put anything in it, which is
+            // backwards. The whole strip across the bottom is the dock as far as a drop
+            // is concerned, and while something is in the air it is lit to say so.
+            Box(
+                Modifier
+                    .fillMaxWidth()
                     .onGloballyPositioned { onDockBounds(it.boundsInWindow()) }
                     .then(
-                        if (style.dockBg || carrying) Modifier
+                        if (carrying) Modifier
                             .clip(RoundedCornerShape(style.dockRadius.dp))
-                            .background(LocalInk.current.copy(alpha = if (carrying) 0.18f else 0.10f))
+                            .background(LocalInk.current.copy(alpha = 0.12f))
+                        else Modifier
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+            Row(
+                modifier = Modifier
+                    .then(
+                        if (style.dockBg) Modifier
+                            .clip(RoundedCornerShape(style.dockRadius.dp))
+                            .background(LocalInk.current.copy(alpha = 0.10f))
                         else Modifier
                     )
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 dockApps.forEach { app ->
-                    AppTile(app = app, showLabel = false, onClick = { onLaunch(app) })
+                    Box(
+                        Modifier
+                            .onGloballyPositioned {
+                                onDockSlot(app.packageName, it.boundsInWindow().center.x)
+                            }
+                            // the one in the air is drawn under the finger instead
+                            .graphicsLayer {
+                                alpha = if (app.packageName == lifted) 0f else 1f
+                            }
+                    ) {
+                        AppTile(
+                            app = app,
+                            showLabel = false,
+                            onClick = { onLaunch(app) },
+                            onCarryStart = { where -> onCarryStart(app, where) },
+                            onCarryMove = onCarryMove,
+                            onCarryEnd = onCarryEnd
+                        )
+                    }
                 }
                 if (carrying && dockApps.isEmpty()) {
                     Box(Modifier.size(style.iconDp.dp))
                 }
+            }
             }
         }
 

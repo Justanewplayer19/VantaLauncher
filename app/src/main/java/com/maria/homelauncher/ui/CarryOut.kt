@@ -29,6 +29,15 @@ class CarryOut {
     var at by mutableStateOf(Offset.Zero)
 
     /**
+     * True when it was picked up out of the dock rather than the drawer.
+     *
+     * The dock is a short list you chose, not every app you own, so dragging out of it
+     * means taking it out: dropped on the home screen it leaves the dock, and dropped
+     * back on the dock it only moves along the row.
+     */
+    var fromDock by mutableStateOf(false)
+
+    /**
      * Filled in by the grid while it is on screen, and cleared when it leaves. The drawer
      * never calls them directly; it moves the finger and the grid keeps up.
      */
@@ -36,8 +45,9 @@ class CarryOut {
     var put: ((Item.App, Offset) -> Unit)? = null
     var drop: (() -> Unit)? = null
 
-    fun begin(a: AppEntry, where: Offset) {
+    fun begin(a: AppEntry, where: Offset, outOfDock: Boolean = false) {
         app = a
+        fromDock = outOfDock
         at = where
         aim?.invoke(where)
     }
@@ -51,6 +61,7 @@ class CarryOut {
     /** Lets go without placing anything. */
     fun forget() {
         app = null
+        fromDock = false
         drop?.invoke()
     }
 }

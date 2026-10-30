@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -106,6 +107,10 @@ fun HomeGrid(
     onSideSwipe: ((Int) -> Unit)? = null,
     /** An app on its way over from the drawer. The grid aims it and puts it down. */
     carry: CarryOut? = null,
+    /** Where the dock is, in window coordinates. Empty when there is no dock. */
+    dockRect: Rect = Rect.Zero,
+    /** Hands an icon to the dock at that x. False when the dock would not take it. */
+    onToDock: (Item.App, Float) -> Boolean = { _, _ -> false },
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -152,6 +157,9 @@ fun HomeGrid(
         var dropOk by remember { mutableStateOf(true) }
         var folderOnto by remember { mutableStateOf<String?>(null) }
         var edgeDir by remember { mutableStateOf(0) }
+        // the finger has left the grid and is over the dock, which is a different
+        // question from which cell it is nearest
+        var overDock by remember { mutableStateOf(false) }
 
         var tray by remember { mutableStateOf(false) }
         var trayInfo by remember { mutableStateOf<AppWidgetProviderInfo?>(null) }
@@ -216,6 +224,7 @@ fun HomeGrid(
                 carry.aim = { where ->
                     val local = where - rootPos
                     pointer = local
+                    overDock = dockRect.contains(where)
                     val (tc, tr) = cellAt(where)
                     dropCol = tc
                     dropRow = tr
@@ -261,7 +270,7 @@ fun HomeGrid(
                         }
                     )
                 }
-                carry.drop = { edgeDir = 0 }
+                carry.drop = { edgeDir = 0; overDock = false }
                 onDispose {
                     carry.aim = null
                     carry.put = null
@@ -330,8 +339,11 @@ fun HomeGrid(
                     }
                 }
 
-                // where the carried item would land
-                if (busy && sizeKey == null && page == pagerState.currentPage && folderOnto == null) {
+                // where the carried item would land. Nothing is landing on the grid while
+                // the finger is over the dock, so the outline would be a lie.
+                if (busy && !overDock && sizeKey == null &&
+                    page == pagerState.currentPage && folderOnto == null
+                ) {
                     val ink = LocalInk.current
                     // an app off the drawer is always one cell; a widget brings its own size
                     val dw = dragged?.w ?: if (coming != null) 1 else traySpan.first
@@ -400,6 +412,8 @@ fun HomeGrid(
 
                             val carry: (Offset) -> Unit = { delta ->
                                 pointer += delta
+                                overDock = p.item is Item.App && p.w == 1 && p.h == 1 &&
+                                    dockRect.contains(rootPos + pointer)
                                 val left = pointer.x - grab.x
                                 val top = pointer.y - grab.y
                                 val tc = (left / cellW).roundToInt().coerceIn(0, maxOf(0, cols - p.w))
@@ -444,11 +458,19 @@ fun HomeGrid(
                                 val tc = dropCol
                                 val tr = dropRow
                                 val ok = dropOk
+                                val toDock = overDock
+                                val dropX = (rootPos + pointer).x
                                 dragKey = null
                                 folderOnto = null
                                 edgeDir = 0
+                                overDock = false
+                                val app = p.item as? Item.App
                                 when {
                                     !moved -> onItemMenu(p.item)
+                                    // off the grid and into the dock, which takes it off
+                                    // the grid: the same icon in both places would be two
+                                    // of it, not one in two places
+                                    toDock && app != null && onToDock(app, dropX) -> remove(p)
                                     onto != null -> commit(mergeIntoFolder(placed, p.item.key, onto))
                                     ok -> moveTo(p.item.key, landed, tc, tr)
                                 }
