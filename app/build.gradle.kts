@@ -22,8 +22,8 @@ android {
         applicationId = "com.maria.homelauncher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.9"
+        versionCode = 10
+        versionName = "0.10"
     }
 
     signingConfigs {
@@ -44,9 +44,19 @@ android {
 
     buildTypes {
         release {
-            // Off on purpose. Icon pack support looks resources up by name through
-            // getIdentifier, which a shrinker cannot see and would strip.
-            isMinifyEnabled = false
+            // Code shrinking is on; resource shrinking is not.
+            //
+            // It used to be off on the grounds that icon packs look resources up by name
+            // through getIdentifier. That was a misreading: those lookups run against the
+            // *pack's* resources, loaded out of another installed app, which nothing we
+            // do to our own build can reach. Our own resources are a handful of icons and
+            // strings, so there is nothing there worth shrinking and a reason not to.
+            //
+            // What the shrinker does buy is a smaller dex, and a smaller dex is less for
+            // a slow phone to verify and load every time the launcher is started again
+            // after being killed, which on a phone with little memory is all day.
+            isMinifyEnabled = true
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }

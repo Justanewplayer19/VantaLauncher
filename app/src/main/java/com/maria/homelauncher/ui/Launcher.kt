@@ -905,10 +905,13 @@ private fun AppDrawer(
         }
     }
 
+    // names pulled apart once rather than on every keystroke
+    val index = remember(apps) { Search.index(apps) }
+
     // Hidden apps stay out of the grid, but a search still finds them.
-    val shown = remember(apps, query, hidden) {
+    val shown = remember(apps, index, query, hidden) {
         if (query.isBlank()) apps.filter { it.packageName !in hidden }
-        else Search.rank(apps, query, uses)
+        else Search.rank(index, query, uses)
     }
 
     // Folders group the list, so a search flattens them again: looking for an app by name

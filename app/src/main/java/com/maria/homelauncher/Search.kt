@@ -31,11 +31,42 @@ object Search {
     private const val PACKAGE = 2
 
     /**
+     * One app with its name already pulled apart.
+     *
+     * Folding a name and splitting it into words is half a dozen allocations, and doing
+     * that for every app on every keystroke is work a phone with slow cores notices
+     * while you are typing. The names only change when the app list does, so this is
+     * built once and searched many times.
+     */
+    class Row(
+        val app: AppEntry,
+        val label: String,
+        val tight: String,
+        val words: List<String>,
+        val initials: String,
+        val pkg: String
+    )
+
+    /** Built once per app list, from [AppEntry.label] and the package name. */
+    fun index(apps: List<AppEntry>): List<Row> = apps.map { app ->
+        val label = fold(app.label)
+        val words = words(app.label)
+        Row(
+            app = app,
+            label = label,
+            tight = tighten(label),
+            words = words,
+            initials = words.mapNotNull { it.firstOrNull() }.joinToString(""),
+            pkg = tighten(fold(app.packageName))
+        )
+    }
+
+    /**
      * The matching apps, best first. [uses] is how many times a package has been opened
      * from the launcher, used only to break ties.
      */
     fun rank(
-        apps: List<AppEntry>,
+        rows: List<Row>,
         raw: String,
         uses: (String) -> Int = { 0 }
     ): List<AppEntry> {
@@ -44,10 +75,10 @@ object Search {
         val qt = tighten(q)
         if (qt.isEmpty()) return emptyList()
 
-        return apps
-            .mapNotNull { app ->
-                val tier = tier(app, q, qt)
-                if (tier == 0) null else app to total(tier, app, uses(app.packageName))
+        return rows
+            .mapNotNull { row ->
+                val tier = tier(row, q, qt)
+                if (tier == 0) null else row.app to total(tier, row.app, uses(row.app.packageName))
             }
             .sortedWith(
                 compareByDescending<Pair<AppEntry, Int>> { it.second }
@@ -67,10 +98,10 @@ object Search {
         return tier * 1000 + opened * 10 + short
     }
 
-    private fun tier(app: AppEntry, q: String, qt: String): Int {
-        val label = fold(app.label)
-        val tight = tighten(label)
-        val words = words(app.label)
+    private fun tier(row: Row, q: String, qt: String): Int {
+        val label = row.label
+        val tight = row.tight
+        val words = row.words
 
         if (label == q || tight == qt) return EXACT
         if (label.startsWith(q) || tight.startsWith(qt)) return LEADS
@@ -79,8 +110,7 @@ object Search {
         // "gm" for Google Maps, "pg" for Pokemon GO. Two letters minimum: a single letter
         // would make every app with that initial an acronym hit and bury the real prefixes.
         if (qt.length >= 2) {
-            val initials = words.mapNotNull { it.firstOrNull() }.joinToString("")
-            if (initials.startsWith(qt)) return INITIALS
+            if (row.initials.startsWith(qt)) return INITIALS
             if (chunks(words, qt)) return CHUNKS
         }
 
@@ -99,7 +129,7 @@ object Search {
         }
 
         // last, and only as a safety net: the thing you remember is sometimes the package
-        if (qt.length >= 3 && tighten(fold(app.packageName)).contains(qt)) return PACKAGE
+        if (qt.length >= 3 && row.pkg.contains(qt)) return PACKAGE
 
         return 0
     }

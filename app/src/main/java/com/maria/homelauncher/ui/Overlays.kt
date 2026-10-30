@@ -142,8 +142,9 @@ fun SearchOverlay(
     val accent = Color(style.accent)
     var query by remember { mutableStateOf("") }
 
-    val hits = remember(apps, query) {
-        if (query.isBlank()) emptyList() else Search.rank(apps, query, uses)
+    val index = remember(apps) { Search.index(apps) }
+    val hits = remember(index, query) {
+        if (query.isBlank()) emptyList() else Search.rank(index, query, uses)
     }
 
     val bar = @Composable {

@@ -77,12 +77,19 @@ object Fonts {
     fun init(ctx: Context) {
         if (appCtx == null) {
             appCtx = ctx.applicationContext
-            webCatalogues = FontSource.entries.filter { it.web }
-                .associateWith { FontWeb.cachedCatalogue(ctx, it) }
-                .filterValues { it.isNotEmpty() }
-            // when there was one web provider its cache had its own folder; now that each
-            // has one, the old folder is dead weight and nothing will ever read it again
-            runCatching { File(ctx.filesDir, "gf").deleteRecursively() }
+            // Off the main thread, because this is the one part of startup that has no
+            // business being on it: a provider's cached family list is a few thousand
+            // lines to read and split, there are several providers, and the only screen
+            // that ever looks at the result is the font page. It is a snapshot state, so
+            // filling it late just refreshes that page if it happens to be open.
+            scope.launch {
+                webCatalogues = FontSource.entries.filter { it.web }
+                    .associateWith { FontWeb.cachedCatalogue(ctx, it) }
+                    .filterValues { it.isNotEmpty() }
+                // when there was one web provider its cache had its own folder; now that
+                // each has one, the old folder is dead weight and nothing will read it
+                runCatching { File(ctx.filesDir, "gf").deleteRecursively() }
+            }
         }
         if (provider != null) return
         val certs = signatures(ctx) ?: return

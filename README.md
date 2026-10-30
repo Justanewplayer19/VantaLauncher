@@ -345,6 +345,51 @@ grid reads it, and whoever lets go decides what happens.
 - A hidden app dropped on the home screen is **unhidden**. `syncLayout` strips hidden apps
   from the layout, so the alternative is an icon that vanishes a frame after it lands.
 
+### Speed on a cheap phone
+
+Measured rather than guessed, with a log around the app load and `am start` for the rest.
+Before: **five milliseconds per icon**, every icon, every cold start, one after another on
+a single thread. Twenty apps on the emulator came to 100ms; a hundred and twenty apps on a
+phone with slow cores is seconds of empty drawer. And a launcher on a phone with little
+memory is killed and started again all day, so "every cold start" means "most times you
+press home". After the four changes below, the same work is **15ms**.
+
+- **Icons are cached on disk** (`IconCache.kt`), one directory per look. Reading a baked
+  icon back is well under a millisecond against five to draw one, so the cost moves to the
+  first run after anything that changes how icons look and then never happens again. It
+  lives in `cacheDir`, so Android is free to throw it away; a miss just bakes again.
+  The file name carries the app's own file date and the date of any replacement icon, so
+  an app update or a changed icon is picked up without anything being invalidated by hand.
+- **The baking is parallel.** It is a pile of independent drawing with nothing shared,
+  which is the one shape of work that gets the full benefit of the four or eight slow
+  cores a cheap phone has instead of the two fast ones it does not.
+- **Icons are baked at the screen's size**, not a flat 168 pixels. At 1.5x or 2x that was
+  more pixels than can ever be shown, paid for twice: once in the drawing and again in the
+  memory a hundred of them hold. A smaller launcher is also one the system kills later,
+  and being killed is most of what makes pressing home feel slow.
+- **The package receiver no longer re-renders on the main thread.** `onReceive` runs
+  there, so every install, update or removal of *any* app froze the home screen for as
+  long as a full reload takes.
+
+Two more, away from icons:
+
+- **Font catalogues load off the main thread.** A provider's cached family list is a few
+  thousand lines to read and split, there are several providers, and the only screen that
+  ever reads the result is the font page. It was happening in `onCreate`.
+- **Search pulls names apart once** instead of on every keystroke (`Search.index`), which
+  is what makes typing feel immediate rather than sticky with a hundred apps installed.
+
+**Code shrinking is on** (`isMinifyEnabled = true`, resources deliberately not shrunk).
+It was off on the grounds that icon packs look resources up by name through
+`getIdentifier`, which was a misreading: those lookups run against the *pack's* resources,
+loaded out of another installed app, and nothing done to our build can reach them. The APK
+went from 7.2MB to 1.8MB, which is that much less dex for a slow phone to verify and load
+every time the launcher starts again.
+
+What is **not** fixed by any of this is how long another app takes to open once you tap
+it. That is that app's own cold start and the launcher has no say in it beyond getting out
+of the way quickly, which it now does.
+
 ### Notification dots
 
 `NotificationWatch` is a `NotificationListenerService`. It keeps a set of package names
