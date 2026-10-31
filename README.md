@@ -19,10 +19,14 @@ app, so it stays.
   typo's worth of slack ("instgram"), then loose letters in order, and the package name
   last. Accents are folded, so "pokemon" finds "Pokemon GO". Ties go to the app you
   actually open, then to the shorter name
-- **An i on every icon** -- tap it for that app's options: dock, home screen, folder,
-  rename, change icon, hide, app info, uninstall. A hold still opens the same list, and
-  the badge can be switched off in Appearance > Grid if you would rather it was not there
+- **Hold an app, then tap it** -- a hold puts a small i on that one icon, and the tap
+  after it opens that app's options: dock, home screen, folder, rename, change icon,
+  hide, app info, uninstall. A tap anywhere else takes the i away again. Appearance >
+  Grid can skip the i and open the list on the hold itself
 - **Hidden apps** -- kept out of the grid, only surface when you type in search
+- **Draw the wallpaper myself** -- for the phone where the home screen is sometimes
+  blank while the lock screen is fine. The launcher keeps a copy of your home picture
+  and draws it in its own window. Off by default, in Settings > Wallpaper
 - **Wallpaper rotation** -- pick individual pictures *or a whole folder* from anywhere on
   the device, rotate on a timer, home / lock / both, optional shuffle, "Change now". A
   watched folder is re-read every time, so pictures added to it later join on their own
@@ -152,8 +156,8 @@ single drag implementation move any of them.
 - Folder vs move is decided by position: the pointer must land inside `FOLDER_HIT` (0.38) of
   the target cell's half-extent to mean "make a folder". Outer region means "move here".
 - Dwelling within 6% of a page edge for 550ms flips the page mid-drag.
-- A hold that releases without moving more than the touch slop opens the item menu
-  instead of being treated as a drag.
+- A hold that releases without moving more than the touch slop marks the item instead of
+  being treated as a drag, and the tap after that opens its menu.
 - Hidden apps are excluded from the layout entirely and reachable only through search.
 - Widgets are dragged from edit mode only. Outside it their own views own every touch,
   which is the entire point of a widget.
@@ -351,7 +355,8 @@ picked.
 Picking an icon up used to need Android's long press, half a second of holding still
 before anything happened, and the only way to the app's options was that same half second
 followed by letting go. Both are now one detector, `iconGestures` in `ui/Carry.kt`, and
-the options have a button of their own.
+the hold itself no longer opens anything: it marks one icon with an i, and the tap after
+it is what opens the list.
 
 - **Nothing is consumed until the hold is through.** Until then the finger might belong to
   the drawer's list or the home pager, and they have the better claim on it. A finger that
@@ -365,14 +370,25 @@ the options have a button of their own.
   it means what it says.
 - **One detector, not two.** A tap detector and a drag detector on the same tile both fire
   on a hold, so the app opens and the menu opens behind it.
-- **The i is a child of the tile and takes its own touches**, which the tile sees as a
-  down that is already consumed and leaves alone.
+- **The i is a mark, not a button.** The icon under it is the button. An earlier version
+  made the badge itself tappable, and a touch target that size on a 52dp icon is a target
+  you miss: it swallowed taps meant for the app and the app stopped opening. Nothing is
+  gained by it either, since the only icon wearing an i is the one you just held.
+- **One i, held in `InfoPick`.** It is a composition local above all three surfaces,
+  because a hold in the drawer has to clear a pick made on the home screen and neither
+  knows the other exists. Keys are prefixed by surface (`grid:`, `drawer:`, `dock:`,
+  `folder:`), since the same app in the drawer and in the dock is two tiles with two
+  different lists behind them.
+- **The pick clears at the end of any gesture that did not set it.** `clearsInfoPick` on
+  the root watches `PointerEventPass.Final` and waits for the finger to leave, so every
+  tile has already read the pick and decided what the tap meant. It compares timestamps
+  rather than just clearing: the hold that puts the i up ends with a finger coming off
+  the screen too, and without that it would clear the pick it had just made.
 - **The badge never leaves the icon.** An earlier version pushed it out past the corner
   with a negative offset, where `clip` on the tile cut it in half and swallowed its
-  touches. Whatever the badge covers, the icon loses, so it is kept small: the tile is
-  bigger than the icon, so a miss lands on the app rather than on nothing.
-- It can be turned off in Appearance > Grid, and then a hold is the way to the options
-  again, the same as it was.
+  touches. It sits in the bottom corner now, the far one from the notification dot.
+- Appearance > Grid can turn the i off, and then a hold opens the list straight away, the
+  same as it did before there was an i.
 
 ### Dragging out of the drawer
 
@@ -715,6 +731,32 @@ there; the page says so rather than pretending otherwise.
 - A video in a set goes through `MediaMetadataRetriever` for a frame; a GIF or animated
   WebP decodes to its first frame through `BitmapFactory` on its own. A folder scan lets
   `video/*` through for the same reason.
+
+### When the home screen comes up blank
+
+Reported on a budget phone (a Galaxy A16): the home screen sometimes has no wallpaper at
+all, while the lock screen shows the same picture fine. Nothing in the launcher is at
+fault and nothing in the launcher can fix it directly. The home wallpaper is not ours:
+the window is transparent, `windowShowWallpaper` is set, and the system draws the picture
+underneath. On a phone short of memory that surface can come up with nothing in it, and
+the keyguard, which asks for its picture again on its own, does not notice.
+
+So `Prefs.ownWallpaper` ("Draw the wallpaper myself", in Settings > Wallpaper) sidesteps
+it rather than fixing it: every picture applied to the home screen is also written to
+`files/home-bg.jpg` at about screen size, and `ui/StillBackground.kt` draws that as the
+bottom layer of the launcher's own window, under even the animated background. A window
+we draw cannot come up empty.
+
+- **Off by default.** It costs one screen-sized bitmap, which is exactly what a phone
+  with this problem has least of, and on a phone without it it buys nothing.
+- **The copy is kept whether or not the setting is on**, because the setting is turned on
+  *after* the home screen has come up blank, and by then the picture has to be in hand.
+  If there is no copy yet it is baked from `lastWallpaper` the first time it is needed,
+  so turning it on works straight away.
+- **The framing can differ a little.** The system has its own crop and parallax for the
+  wallpaper and will not say what they are; ours is centre-cropped to the window.
+- A wallpaper set from outside the launcher leaves nothing to copy, so there the setting
+  draws nothing and the system's wallpaper shows through as before.
 
 ### Animated background
 

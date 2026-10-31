@@ -126,6 +126,7 @@ fun LauncherRoot(
     var welcome by remember { mutableStateOf(false) }
     var single by remember { mutableStateOf(prefs.singleSurface) }
     val context = LocalContext.current
+    val infoPick = remember { InfoPick() }
 
     val layoutStore = remember { LayoutStore(context) }
     val drawerStore = remember { DrawerStore(context) }
@@ -143,6 +144,7 @@ fun LauncherRoot(
     var editingHome by remember { mutableStateOf(false) }
     var cellDp by remember { mutableStateOf(72f to 96f) }
     var homePages by remember { mutableStateOf(prefs.homePages) }
+    var ownWall by remember { mutableStateOf(prefs.ownWallpaper) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var liveLoop by remember { mutableStateOf(prefs.liveLoop) }
     var audio by remember { mutableStateOf(prefs.homeAudio) }
@@ -181,6 +183,7 @@ fun LauncherRoot(
      */
     fun reread() {
         hidden = prefs.hidden
+        ownWall = prefs.ownWallpaper
         liveBg = prefs.liveBg
         liveLoop = prefs.liveLoop
         audio = prefs.homeAudio
@@ -347,8 +350,21 @@ fun LauncherRoot(
         label = "homeAlpha"
     )
 
-    androidx.compose.runtime.CompositionLocalProvider(LocalBadges provides badges) {
-    Box(Modifier.fillMaxSize()) {
+    // a surface changing under it is as good a dismissal as a tap: the icon that was
+    // holding the i is not on screen any more
+    LaunchedEffect(drawerOpen, settingsOpen, openFolder, drawerFolder, intro) {
+        infoPick.clear()
+    }
+
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalBadges provides badges,
+        LocalInfoPick provides infoPick
+    ) {
+    Box(Modifier.fillMaxSize().clearsInfoPick(infoPick)) {
+        // under even the live background, in the one case where the launcher is drawing
+        // the still wallpaper itself as well
+        StillBackground(ownWall, Modifier.fillMaxSize())
+
         // behaves like the wallpaper: underneath everything, including the panels, which
         // are translucent over it the same way they are over a still image
         LiveBackground(liveBg, liveLoop, Modifier.fillMaxSize())
@@ -908,6 +924,7 @@ private fun HomeScreen(
                         AppTile(
                             app = app,
                             showLabel = false,
+                            infoKey = "dock:" + app.packageName,
                             onClick = { onLaunch(app) },
                             onLongClick = { onInfo(app) },
                             onCarryStart = { where -> onCarryStart(app, where) },
@@ -1165,6 +1182,7 @@ private fun DrawerTile(
         is DrawerCell.Single -> AppTile(
             app = cell.app,
             showLabel = style.showLabels,
+            infoKey = "drawer:" + cell.app.packageName,
             onClick = { onLaunch(cell.app) },
             onLongClick = { onAppMenu(cell.app) },
             onCarryStart = onCarryStart?.let { go -> { where: Offset -> go(cell.app, where) } },
@@ -1172,20 +1190,26 @@ private fun DrawerTile(
             onCarryEnd = onCarryEnd
         )
 
-        is DrawerCell.Group -> Box(
-            Modifier
-                .clip(RoundedCornerShape(18.dp))
-                .combinedClickable(
-                    onClick = { onOpenFolder(cell.folder) },
-                    onLongClick = { onFolderMenu(cell.folder) }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            ItemTile(
-                item = cell.folder,
-                iconOf = iconOf,
-                onInfo = if (style.infoBadge) ({ onFolderMenu(cell.folder) }) else null
-            )
+        is DrawerCell.Group -> {
+            val pick = LocalInfoPick.current
+            val infoKey = "folder:" + cell.folder.id
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .combinedClickable(
+                        onClick = {
+                            if (pick.key == infoKey) onFolderMenu(cell.folder)
+                            else onOpenFolder(cell.folder)
+                        },
+                        onLongClick = {
+                            if (style.infoBadge) pick.show(infoKey)
+                            else onFolderMenu(cell.folder)
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                ItemTile(item = cell.folder, iconOf = iconOf, infoKey = infoKey)
+            }
         }
     }
 }
@@ -1282,7 +1306,13 @@ private fun AppTile(
     app: AppEntry,
     showLabel: Boolean,
     onClick: () -> Unit,
-    /** The app's options: the i opens them, and so does a hold that goes nowhere. */
+    /**
+     * This tile's name in [InfoPick]. The same app is in the drawer and in the dock and
+     * those are two different tiles with two different lists behind them, so the name
+     * says which surface as well as which app.
+     */
+    infoKey: String,
+    /** The app's options. A hold shows the i, and the tap after it comes here. */
     onLongClick: (() -> Unit)? = null,
     /**
      * Set where the tile can be dragged off the surface it is on. Window coordinates.
@@ -1297,10 +1327,25 @@ private fun AppTile(
 ) {
     val style = LocalStyle.current
     val density = LocalDensity.current
+    val pick = LocalInfoPick.current
     var origin by remember { mutableStateOf(Offset.Zero) }
 
+    // A hold marks the app rather than opening anything, and the tap after it is the one
+    // that opens the list. With the i turned off the hold goes straight there, which is
+    // how it worked before there was an i at all.
+    val hold: () -> Unit = {
+        val go = onLongClick
+        if (go != null) {
+            if (style.infoBadge) pick.show(infoKey) else go()
+        }
+    }
+    val tap: () -> Unit = {
+        val go = onLongClick
+        if (go != null && pick.key == infoKey) go() else onClick()
+    }
+
     val touch = if (onCarryStart == null) {
-        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        Modifier.combinedClickable(onClick = tap, onLongClick = hold)
     } else {
         Modifier.pointerInput(app.packageName) {
             var lifted = false
@@ -1308,8 +1353,8 @@ private fun AppTile(
             var at = Offset.Zero
             val slop = with(density) { CARRY_SLOP_DP.dp.toPx() }
             iconGestures(
-                onTap = onClick,
-                onStill = { onLongClick?.invoke() },
+                onTap = tap,
+                onStill = hold,
                 onStart = { inTile ->
                     lifted = false
                     moved = 0f
@@ -1327,7 +1372,7 @@ private fun AppTile(
                         onCarryMove?.invoke(at)
                     }
                 },
-                onEnd = { if (lifted) onCarryEnd?.invoke() else onLongClick?.invoke() },
+                onEnd = { if (lifted) onCarryEnd?.invoke() else hold() },
                 onCancel = { if (lifted) onCarryEnd?.invoke() }
             )
         }
@@ -1351,8 +1396,8 @@ private fun AppTile(
             if (style.badges && app.packageName in LocalBadges.current) {
                 BadgeDot(Modifier.align(Alignment.TopEnd))
             }
-            if (style.infoBadge && onLongClick != null) {
-                InfoBadge(Modifier.align(Alignment.TopStart)) { onLongClick() }
+            if (onLongClick != null && pick.key == infoKey) {
+                InfoBadge(Modifier.align(Alignment.BottomEnd))
             }
         }
         if (showLabel) {

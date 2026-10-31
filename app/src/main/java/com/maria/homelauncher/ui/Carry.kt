@@ -4,17 +4,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -112,45 +117,92 @@ suspend fun PointerInputScope.iconGestures(
 }
 
 /**
- * The little i in the corner of an icon: everything that used to need a long press.
+ * Which one icon is showing its i.
  *
- * The hold is faster than it was, but a hold is still a thing you have to know about and
- * wait through. This is a button, and a button needs neither.
+ * One, and only while it has been asked for: a hold puts the i on the app under the
+ * finger and takes it off whatever had it before. An i on every app at once is noise on
+ * a screen that is mostly icons, and it answers a question nobody asked.
+ *
+ * It sits above all three surfaces because a hold in the drawer has to clear a pick made
+ * on the home screen, and the two know nothing about each other.
+ */
+@Stable
+class InfoPick {
+
+    var key by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * When the pick last moved.
+     *
+     * A gesture notes the time it began and leaves the pick alone if it was the one that
+     * set it. That is the whole trick behind clearing on a tap anywhere: the hold that
+     * puts the i up ends with a finger coming off the screen too, and without this it
+     * would clear the pick it had just made.
+     */
+    var mark = 0L
+        private set
+
+    fun show(k: String) {
+        key = k
+        mark = System.nanoTime()
+    }
+
+    fun clear() {
+        key = null
+        mark = System.nanoTime()
+    }
+}
+
+val LocalInfoPick = staticCompositionLocalOf { InfoPick() }
+
+/**
+ * Takes the i down again at the end of any gesture that did not put it up.
+ *
+ * On [PointerEventPass.Final] and waiting for the finger to leave, so every tile has
+ * already had the event and decided what it meant. A tap on the picked icon opens its
+ * options and this clears up behind it; a tap anywhere else just clears.
+ */
+fun Modifier.clearsInfoPick(pick: InfoPick): Modifier = pointerInput(pick) {
+    awaitEachGesture {
+        val began = System.nanoTime()
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Final)
+        } while (event.changes.any { it.pressed })
+        if (pick.key != null && pick.mark < began) pick.clear()
+    }
+}
+
+/**
+ * The little i on the icon you held.
+ *
+ * It is a mark, not a button. The icon it is sitting on is the button: tapping that is
+ * what opens the options, so there is no small target to miss and nothing for the i to
+ * steal from the app underneath it.
  */
 @Composable
-internal fun InfoBadge(modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun InfoBadge(modifier: Modifier = Modifier) {
     val style = LocalStyle.current
     val ink = LocalInk.current
     val dot = (style.iconDp * 0.34f).coerceIn(17f, 22f)
 
-    // Only a little bigger than the circle it draws, and never pushed outside the icon:
-    // whatever the badge takes, the icon loses, and a tile that opens its options when
-    // you meant to open the app is worse than a badge that is a touch small. The tile
-    // around it is bigger than the icon, so the miss lands on the app rather than on
-    // nothing at all.
+    // the panel colour under a ring of the text colour, so it reads on a pale icon and a
+    // dark one without knowing which it landed on
     Box(
         modifier
-            .size((dot + 4f).dp)
-            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) },
+            .size(dot.dp)
+            .clip(CircleShape)
+            .background(Color(style.bgColor).copy(alpha = 0.94f))
+            .border(1.dp, ink.copy(alpha = 0.45f), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        // the panel colour under a ring of the text colour, so it reads on a pale icon
-        // and a dark one without knowing which it landed on
-        Box(
-            Modifier
-                .size(dot.dp)
-                .clip(CircleShape)
-                .background(Color(style.bgColor).copy(alpha = 0.94f))
-                .border(1.dp, ink.copy(alpha = 0.45f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                "i",
-                color = ink.copy(alpha = 0.95f),
-                fontSize = (dot * 0.60f).sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = style.fontFamily
-            )
-        }
+        Text(
+            "i",
+            color = ink.copy(alpha = 0.95f),
+            fontSize = (dot * 0.60f).sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = style.fontFamily
+        )
     }
 }

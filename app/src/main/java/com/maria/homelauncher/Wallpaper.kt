@@ -15,6 +15,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 private const val WORK_NAME = "wallpaper-rotate"
@@ -208,6 +210,9 @@ object Wallpaper {
             Prefs(ctx).lastWallpaper = uri.toString()
             WallpaperColour.applyIfWanted(ctx, uri)
         }
+        // kept whether or not the setting is on, because the setting is turned on *after*
+        // the home screen has come up blank, and by then the picture needs to be in hand
+        if (ok && WallpaperManager.FLAG_SYSTEM in flags) keepCopy(ctx, bitmap)
         return ok
     }
 
@@ -296,6 +301,66 @@ object Wallpaper {
         // a decoder can hand back something with no pixels in it rather than failing
         out?.takeIf { it.width > 0 && it.height > 0 }
     }.getOrNull()
+
+    /** The copy of the home picture the launcher draws itself. See [Prefs.ownWallpaper]. */
+    fun ownFile(ctx: Context): File = File(ctx.filesDir, "home-bg.jpg")
+
+    /**
+     * Writes the copy, at about the size of the screen and no bigger.
+     *
+     * Through a temporary file and a rename, so a copy that is half written is never a
+     * copy anything tries to draw.
+     */
+    private fun keepCopy(ctx: Context, bitmap: Bitmap) {
+        runCatching {
+            val metrics = ctx.resources.displayMetrics
+            val want = maxOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+            val big = maxOf(bitmap.width, bitmap.height)
+            val fit = if (big > want) {
+                val f = want.toFloat() / big
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * f).toInt().coerceAtLeast(1),
+                    (bitmap.height * f).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else {
+                bitmap
+            }
+
+            val tmp = File(ctx.filesDir, "home-bg.part")
+            FileOutputStream(tmp).use { fit.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+            val out = ownFile(ctx)
+            out.delete()
+            tmp.renameTo(out)
+            if (fit !== bitmap) fit.recycle()
+        }
+    }
+
+    /**
+     * The copy, ready to draw. Baked out of the last picture that was set if there is no
+     * copy yet, so turning the setting on works straight away rather than at the next
+     * change. Null when there has never been a picture to copy, which is the case when
+     * the wallpaper was set from somewhere other than here.
+     */
+    suspend fun ownCopy(ctx: Context): Bitmap? = withContext(Dispatchers.IO) {
+        val f = ownFile(ctx)
+        if (f.exists()) {
+            val saved = runCatching {
+                BitmapFactory.decodeFile(
+                    f.path,
+                    BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                )
+            }.getOrNull()
+            if (saved != null) return@withContext saved
+        }
+
+        val last = Prefs(ctx).lastWallpaper
+        if (last.isBlank()) return@withContext null
+        val baked = decode(ctx, Uri.parse(last)) ?: return@withContext null
+        keepCopy(ctx, baked)
+        baked
+    }
 
     fun schedule(ctx: Context) {
         val prefs = Prefs(ctx)

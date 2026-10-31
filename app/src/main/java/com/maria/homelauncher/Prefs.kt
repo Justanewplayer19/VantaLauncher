@@ -176,6 +176,25 @@ class Prefs(ctx: Context) {
         get() = sp.getString("liveBg", "")!!
         set(v) = sp.edit().putString("liveBg", v).apply()
 
+    /**
+     * Draw the home wallpaper into the launcher's own window instead of leaving it to
+     * the one behind it.
+     *
+     * The home wallpaper is not ours: the window is transparent and declares that it
+     * shows the wallpaper, and the system draws the picture underneath. On a phone with
+     * little memory to spare that surface sometimes comes up with nothing in it, and the
+     * home screen is black while the lock screen, which asks for the picture again on
+     * its own, is fine. Nothing the launcher does can make the system draw it.
+     *
+     * So this draws a copy of the same picture ourselves, as the bottom layer of the
+     * window, which is one bitmap of memory against a home screen that is reliably
+     * there. Off by default: on a phone that does not have the problem it is a cost for
+     * nothing.
+     */
+    var ownWallpaper: Boolean
+        get() = sp.getBoolean("ownWallpaper", false)
+        set(v) = sp.edit().putBoolean("ownWallpaper", v).apply()
+
     /** False means play once and hold the last frame. */
     var liveLoop: Boolean
         get() = sp.getBoolean("liveLoop", true)

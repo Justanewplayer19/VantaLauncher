@@ -73,7 +73,10 @@ data class Style(
     val folderAlpha: Float = 0.16f,
     val folderRadius: Int = 26,
     val badges: Boolean = true,
-    /** The little i in the corner of each icon that opens its options. */
+    /**
+     * Whether a hold puts a little i on the icon and waits for a tap, instead of opening
+     * the options there and then.
+     */
     val infoBadge: Boolean = true,
 
     val accent: Long = 0xFFBFC9FF,

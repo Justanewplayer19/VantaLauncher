@@ -113,6 +113,7 @@ fun HomeGrid(
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
+    val pick = LocalInfoPick.current
     val density = LocalDensity.current
 
     var rootPos by remember { mutableStateOf(Offset.Zero) }
@@ -451,6 +452,13 @@ fun HomeGrid(
                                 )
                             }
 
+                            val clearDrag: () -> Unit = {
+                                dragKey = null
+                                folderOnto = null
+                                edgeDir = 0
+                                overDock = false
+                            }
+
                             val land: (Boolean) -> Unit = { moved ->
                                 val onto = folderOnto
                                 val landed = pagerState.currentPage
@@ -546,33 +554,34 @@ fun HomeGrid(
                                     Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    val infoKey = "grid:" + p.item.key
                                     ItemTile(
                                         item = item,
                                         iconOf = iconOf,
                                         highlightFolder = folderOnto == p.item.key,
-                                        onInfo = if (style.infoBadge) ({
-                                            onItemMenu(p.item)
-                                        }) else null,
+                                        infoKey = infoKey,
                                         modifier = Modifier
                                             .pointerInput(p.item.key, live, cols, rows) {
                                                 iconGestures(
                                                     onTap = {
-                                                        when (item) {
-                                                            is Item.App -> onLaunch(item)
-                                                            is Item.Folder -> onOpenFolder(item)
+                                                        // the i is up on this one, so the
+                                                        // tap it is waiting for is this
+                                                        when {
+                                                            pick.key == infoKey -> onItemMenu(p.item)
+                                                            item is Item.App -> onLaunch(item)
+                                                            item is Item.Folder -> onOpenFolder(item)
                                                             else -> Unit
                                                         }
                                                     },
-                                                    onStill = { land(false) },
+                                                    onStill = {
+                                                        clearDrag()
+                                                        if (style.infoBadge) pick.show(infoKey)
+                                                        else onItemMenu(p.item)
+                                                    },
                                                     onStart = { lift(it) },
                                                     onMove = { carry(it) },
                                                     onEnd = { land(true) },
-                                                    onCancel = {
-                                                        dragKey = null
-                                                        folderOnto = null
-                                                        edgeDir = 0
-                                                        overDock = false
-                                                    }
+                                                    onCancel = { clearDrag() }
                                                 )
                                             }
                                     )
@@ -1109,8 +1118,11 @@ fun ItemTile(
     highlightFolder: Boolean = false,
     highlightSlot: Boolean = false,
     hideLabel: Boolean = false,
-    /** Set to show the i in the corner; it is what opens this item's options. */
-    onInfo: (() -> Unit)? = null,
+    /**
+     * This item's name in [InfoPick], where set means it can show the i. It shows up
+     * only while the pick is on this one.
+     */
+    infoKey: String? = null,
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -1148,8 +1160,12 @@ fun ItemTile(
                 BadgeDot(Modifier.align(Alignment.TopEnd))
             }
 
-            if (onInfo != null && item !is Item.Widget && item !is Item.Clock) {
-                InfoBadge(Modifier.align(Alignment.TopStart), onInfo)
+            if (infoKey != null && infoKey == LocalInfoPick.current.key &&
+                item !is Item.Widget && item !is Item.Clock
+            ) {
+                // the far corner from the notification dot, so a held app with something
+                // waiting in it does not end up wearing both in the same place
+                InfoBadge(Modifier.align(Alignment.BottomEnd))
             }
         }
 

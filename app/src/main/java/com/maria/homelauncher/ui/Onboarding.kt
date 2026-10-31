@@ -228,7 +228,7 @@ private fun GettingAround(accent: Color) {
     Title("Getting around")
     Bullet("Swipe up for your apps", "Start the swipe from the middle of the screen, not the very bottom edge. That part belongs to Android.", accent)
     Bullet("Type to search", "The search bar finds any app, including ones you have hidden.", accent)
-    Bullet("Tap the i on an icon", "Add it to the dock, put it on the home screen, rename it, hide it, open app info, or uninstall it. A hold does the same, and the i can be turned off in Appearance.", accent)
+    Bullet("Hold an app, then tap it", "A hold puts a small i on that icon. Tap it again to add it to the dock, put it on the home screen, rename it, hide it, open app info, or uninstall it. Appearance can skip the i and open the list on the hold itself.", accent)
     Bullet("Hold and keep going", "Hold an app for a moment and drag: it comes out of the drawer and you can drop it anywhere on the home screen, or in the dock. It stays in the drawer too.", accent)
     Bullet("Back does nothing on home", "That is deliberate. Home is the bottom of the stack.", accent)
     Bullet("The gear is your settings", "It sits next to the search bar.", accent)
