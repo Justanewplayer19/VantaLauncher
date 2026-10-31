@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.maria.homelauncher.OWN_NEVER
 import com.maria.homelauncher.Wallpaper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,13 +31,17 @@ import kotlinx.coroutines.withContext
  * lock screen is fine. See `Prefs.ownWallpaper` for why none of that is fixable from
  * here, and why drawing a copy is.
  *
+ * [mode] is the setting, not the answer: `Wallpaper.drawOwn` works out whether this
+ * phone needs it, and it is asked again every time the launcher comes back to the front,
+ * so a phone that stops needing it stops paying for it.
+ *
  * It sits under everything the launcher draws, so the panels are translucent over it the
  * same way they are over the real thing, and it costs nothing at all while another app
  * is in front: the window is gone and so is the bitmap's only reader.
  */
 @Composable
-fun StillBackground(on: Boolean, modifier: Modifier = Modifier) {
-    if (!on) return
+fun StillBackground(mode: Int, modifier: Modifier = Modifier) {
+    if (mode == OWN_NEVER) return
     val ctx = LocalContext.current
     var pic by remember { mutableStateOf<ImageBitmap?>(null) }
     var stamp by remember { mutableStateOf(0L) }
@@ -53,8 +58,17 @@ fun StillBackground(on: Boolean, modifier: Modifier = Modifier) {
         onDispose { owner.lifecycle.removeObserver(watch) }
     }
 
-    LaunchedEffect(on, resumed) {
-        val now = withContext(Dispatchers.IO) { Wallpaper.ownFile(ctx).lastModified() }
+    LaunchedEffect(mode, resumed) {
+        val check = withContext(Dispatchers.IO) {
+            Wallpaper.drawOwn(ctx, mode) to Wallpaper.ownFile(ctx).lastModified()
+        }
+        val (wanted, now) = check
+        if (!wanted) {
+            // the picture behind us is fine again, so let go of ours
+            pic = null
+            stamp = 0L
+            return@LaunchedEffect
+        }
         if (pic != null && now == stamp) return@LaunchedEffect
         val next: Bitmap? = Wallpaper.ownCopy(ctx)
         stamp = now

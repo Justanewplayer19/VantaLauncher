@@ -1,5 +1,6 @@
 package com.maria.homelauncher
 
+import android.app.ActivityManager
 import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.Bitmap
@@ -210,9 +211,15 @@ object Wallpaper {
             Prefs(ctx).lastWallpaper = uri.toString()
             WallpaperColour.applyIfWanted(ctx, uri)
         }
-        // kept whether or not the setting is on, because the setting is turned on *after*
-        // the home screen has come up blank, and by then the picture needs to be in hand
-        if (ok && WallpaperManager.FLAG_SYSTEM in flags) keepCopy(ctx, bitmap)
+        // kept whether or not anything is drawing it, because by the time the home
+        // screen has come up blank the picture has to already be in hand
+        if (ok && WallpaperManager.FLAG_SYSTEM in flags) {
+            keepCopy(ctx, bitmap)
+            // what the system calls this picture, so the copy can later be checked
+            // against what is actually up. See [drawOwn].
+            Prefs(ctx).homeWallpaperId =
+                runCatching { wm.getWallpaperId(WallpaperManager.FLAG_SYSTEM) }.getOrDefault(0)
+        }
         return ok
     }
 
@@ -301,6 +308,59 @@ object Wallpaper {
         // a decoder can hand back something with no pixels in it rather than failing
         out?.takeIf { it.width > 0 && it.height > 0 }
     }.getOrNull()
+
+    /**
+     * Whether the launcher should draw the home wallpaper itself right now.
+     *
+     * On [OWN_AUTO] this is the whole of "automatic", and it is deliberately careful,
+     * because drawing a copy when the real thing is fine is a picture nobody asked for
+     * covering the one they did:
+     *
+     * - Nothing to draw, no drawing. The copy only exists once a home picture has been
+     *   set from here.
+     * - A live wallpaper is a moving picture, and a still copy over it would be a
+     *   downgrade pretending to be a fix.
+     * - **The copy has to be of the picture that is meant to be up.** If the system
+     *   hands out a different id than the one it gave when we set ours, something else
+     *   has set a wallpaper since, and drawing our copy would quietly undo it. An id of
+     *   nothing is the exception: that is the failure this is here for.
+     * - Then it is only worth the memory on a phone that is short of it, or where the
+     *   system is showing no wallpaper at all.
+     *
+     * Every check is cheap and none of them needs a permission, which is the reason
+     * they are the checks: the one thing that would settle it, looking at what is
+     * actually on the screen behind us, is not something an app can do.
+     */
+    fun drawOwn(ctx: Context, mode: Int): Boolean {
+        if (mode == OWN_NEVER) return false
+        val prefs = Prefs(ctx)
+        if (!ownFile(ctx).exists() && prefs.lastWallpaper.isBlank()) return false
+
+        val wm = WallpaperManager.getInstance(ctx)
+        if (runCatching { wm.wallpaperInfo }.getOrNull() != null) return false
+
+        val id = runCatching { wm.getWallpaperId(WallpaperManager.FLAG_SYSTEM) }.getOrDefault(0)
+        val empty = id <= 0
+        val mine = empty || prefs.homeWallpaperId == 0 || prefs.homeWallpaperId == id
+        if (!mine) return false
+
+        return mode == OWN_ALWAYS || empty || tight(ctx)
+    }
+
+    /**
+     * A phone with little room to spare, which is where the wallpaper surface comes up
+     * empty in the first place. The flag is set by the manufacturer and often is not, so
+     * the amount of memory is the fallback: a phone with less than 6GB is the shape of
+     * phone this happens on.
+     */
+    private fun tight(ctx: Context): Boolean {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        if (runCatching { am.isLowRamDevice }.getOrDefault(false)) return true
+        val info = ActivityManager.MemoryInfo()
+        runCatching { am.getMemoryInfo(info) }.getOrElse { return false }
+        val gb = info.totalMem / (1024f * 1024f * 1024f)
+        return gb > 0f && gb < 6f
+    }
 
     /** The copy of the home picture the launcher draws itself. See [Prefs.ownWallpaper]. */
     fun ownFile(ctx: Context): File = File(ctx.filesDir, "home-bg.jpg")

@@ -26,7 +26,8 @@ app, so it stays.
 - **Hidden apps** -- kept out of the grid, only surface when you type in search
 - **Draw the wallpaper myself** -- for the phone where the home screen is sometimes
   blank while the lock screen is fine. The launcher keeps a copy of your home picture
-  and draws it in its own window. Off by default, in Settings > Wallpaper
+  and draws it in its own window. Automatic by default: it works out which phones need
+  it. Always and Never are there in Settings > Wallpaper if it gets it wrong
 - **Wallpaper rotation** -- pick individual pictures *or a whole folder* from anywhere on
   the device, rotate on a timer, home / lock / both, optional shuffle, "Change now". A
   watched folder is re-read every time, so pictures added to it later join on their own
@@ -747,16 +748,31 @@ it rather than fixing it: every picture applied to the home screen is also writt
 bottom layer of the launcher's own window, under even the animated background. A window
 we draw cannot come up empty.
 
-- **Off by default.** It costs one screen-sized bitmap, which is exactly what a phone
-  with this problem has least of, and on a phone without it it buys nothing.
-- **The copy is kept whether or not the setting is on**, because the setting is turned on
-  *after* the home screen has come up blank, and by then the picture has to be in hand.
-  If there is no copy yet it is baked from `lastWallpaper` the first time it is needed,
-  so turning it on works straight away.
+Automatic is the default, and `Wallpaper.drawOwn` is all of it. The decision is made
+again every time the launcher comes back to the front, so a phone that stops needing it
+stops paying for it.
+
+- **The one check that would settle it is not available.** Whether the surface behind
+  our window actually has anything in it is a question about the screen, and an app
+  cannot look at the screen. Everything below is a proxy, and the proxies are chosen to
+  fail towards doing nothing.
+- **Nothing to draw, no drawing**, and a live wallpaper is never covered: a still copy
+  over a moving picture is a downgrade pretending to be a fix.
+- **The copy has to be of the picture that is meant to be up.** `getWallpaperId` is
+  recorded when we set the home wallpaper and checked before drawing. A different id
+  means something else has set one since, and drawing the copy would quietly undo it.
+  No id at all is the exception, because that *is* the failure this is here for.
+- **Then it has to be worth the memory**: the system reporting no wallpaper, or a phone
+  short of memory, which is where the surface comes up empty in the first place.
+  `isLowRamDevice` is set by the manufacturer and usually is not, so the real test is
+  `totalMem` under 6GB.
+- **The copy is kept whichever way the setting goes**, because by the time the home
+  screen has come up blank the picture has to already be in hand. If there is no copy
+  yet it is baked from `lastWallpaper` the first time one is needed.
 - **The framing can differ a little.** The system has its own crop and parallax for the
   wallpaper and will not say what they are; ours is centre-cropped to the window.
-- A wallpaper set from outside the launcher leaves nothing to copy, so there the setting
-  draws nothing and the system's wallpaper shows through as before.
+- A wallpaper set from outside the launcher leaves nothing to copy, so there this draws
+  nothing and the system's wallpaper shows through as before.
 
 ### Animated background
 

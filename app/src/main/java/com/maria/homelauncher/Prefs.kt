@@ -6,6 +6,11 @@ const val TARGET_HOME = 0
 const val TARGET_LOCK = 1
 const val TARGET_BOTH = 2
 
+/** Let the launcher work out whether it has to draw the home wallpaper itself. */
+const val OWN_AUTO = 0
+const val OWN_ALWAYS = 1
+const val OWN_NEVER = 2
+
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("launcher", Context.MODE_PRIVATE)
 
@@ -177,8 +182,8 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putString("liveBg", v).apply()
 
     /**
-     * Draw the home wallpaper into the launcher's own window instead of leaving it to
-     * the one behind it.
+     * Whether to draw the home wallpaper into the launcher's own window instead of
+     * leaving it to the one behind it. One of [OWN_AUTO], [OWN_ALWAYS], [OWN_NEVER].
      *
      * The home wallpaper is not ours: the window is transparent and declares that it
      * shows the wallpaper, and the system draws the picture underneath. On a phone with
@@ -188,12 +193,22 @@ class Prefs(ctx: Context) {
      *
      * So this draws a copy of the same picture ourselves, as the bottom layer of the
      * window, which is one bitmap of memory against a home screen that is reliably
-     * there. Off by default: on a phone that does not have the problem it is a cost for
-     * nothing.
+     * there. Automatic weighs that up per phone; see `Wallpaper.drawOwn`.
      */
-    var ownWallpaper: Boolean
-        get() = sp.getBoolean("ownWallpaper", false)
-        set(v) = sp.edit().putBoolean("ownWallpaper", v).apply()
+    var ownWallpaper: Int
+        get() = sp.getInt("ownWallpaperMode", if (sp.getBoolean("ownWallpaper", false)) OWN_ALWAYS else OWN_AUTO)
+        set(v) = sp.edit().putInt("ownWallpaperMode", v).apply()
+
+    /**
+     * The wallpaper id the system handed out when we last set the home picture.
+     *
+     * If it does not match any more, something other than us changed the wallpaper, and
+     * on the phones this is here for that something is usually the system giving up on
+     * it. See `Wallpaper.drawOwn`.
+     */
+    var homeWallpaperId: Int
+        get() = sp.getInt("homeWallpaperId", 0)
+        set(v) = sp.edit().putInt("homeWallpaperId", v).apply()
 
     /** False means play once and hold the last frame. */
     var liveLoop: Boolean

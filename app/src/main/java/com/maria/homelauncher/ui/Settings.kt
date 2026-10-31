@@ -36,6 +36,9 @@ import com.maria.homelauncher.Fonts
 import com.maria.homelauncher.Backup
 import com.maria.homelauncher.StyleStore
 import com.maria.homelauncher.Style
+import com.maria.homelauncher.OWN_ALWAYS
+import com.maria.homelauncher.OWN_AUTO
+import com.maria.homelauncher.OWN_NEVER
 import com.maria.homelauncher.TARGET_BOTH
 import com.maria.homelauncher.TARGET_HOME
 import com.maria.homelauncher.TARGET_LOCK
@@ -543,7 +546,7 @@ private fun WallpaperPage(
     var lockOn by remember { mutableStateOf(prefs.lockRotate) }
     var lockRandom by remember { mutableStateOf(prefs.lockRandom) }
     var single by remember { mutableStateOf(TARGET_BOTH) }
-    var own by remember { mutableStateOf(prefs.ownWallpaper) }
+    var own by remember { mutableIntStateOf(prefs.ownWallpaper) }
 
     // read off the disk rather than from what was saved, so a watched folder reports what
     // is in it now and not what was in it when it was picked
@@ -576,20 +579,38 @@ private fun WallpaperPage(
 
     Spacer(Modifier.height(26.dp))
     Label("If the home screen comes up blank")
-    Spacer(Modifier.height(6.dp))
-    ToggleRow("Draw the wallpaper myself", own) {
-        own = it
-        prefs.ownWallpaper = it
+    Text(
+        "Draw the wallpaper myself",
+        color = LocalInk.current.copy(alpha = 0.45f),
+        fontSize = 11.sp,
+        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+    )
+    val ownModes = listOf(OWN_AUTO to "Automatic", OWN_ALWAYS to "Always", OWN_NEVER to "Never")
+    ChipRow(ownModes.map { it.second }, ownModes.indexOfFirst { it.first == own }) { i ->
+        own = ownModes[i].first
+        prefs.ownWallpaper = own
     }
     Hint(
-        "For the phone where the home screen is sometimes black while the lock screen " +
-            "shows the picture fine. The wallpaper behind a launcher belongs to the " +
-            "system, and on a phone short of memory it can come up with nothing in it. " +
-            "This keeps a copy of your home picture and draws it in the launcher's own " +
-            "window, which cannot come up empty. It costs one picture of memory, so " +
-            "leave it off on a phone that does not need it. Set your home wallpaper " +
-            "from here at least once so there is a copy to draw. The framing can come " +
-            "out a little different, since the crop the system uses is its own."
+        when (own) {
+            OWN_ALWAYS ->
+                "The launcher draws your home picture itself, every time. One picture " +
+                    "of memory, and a home screen that cannot come up blank."
+            OWN_NEVER ->
+                "The home screen shows the system's wallpaper and nothing else, which " +
+                    "is how a launcher normally works."
+            else ->
+                "Left to work it out. The wallpaper behind a launcher belongs to the " +
+                    "system, and on a phone short of memory it sometimes comes up with " +
+                    "nothing in it: black home screen, fine lock screen. The launcher " +
+                    "keeps a copy of your home picture and draws it itself on the " +
+                    "phones where that happens, and stays out of the way on the ones " +
+                    "where it does not. Nothing to do."
+        }
+    )
+    Hint(
+        "Set your home wallpaper from here at least once, so there is a copy to draw. " +
+            "The framing can come out a little different, since the crop the system " +
+            "uses is its own."
     )
 
     Spacer(Modifier.height(26.dp))

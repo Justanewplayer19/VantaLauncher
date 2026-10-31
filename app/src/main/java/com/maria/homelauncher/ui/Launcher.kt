@@ -144,7 +144,7 @@ fun LauncherRoot(
     var editingHome by remember { mutableStateOf(false) }
     var cellDp by remember { mutableStateOf(72f to 96f) }
     var homePages by remember { mutableStateOf(prefs.homePages) }
-    var ownWall by remember { mutableStateOf(prefs.ownWallpaper) }
+    var ownWall by remember { mutableIntStateOf(prefs.ownWallpaper) }
     var liveBg by remember { mutableStateOf(prefs.liveBg) }
     var liveLoop by remember { mutableStateOf(prefs.liveLoop) }
     var audio by remember { mutableStateOf(prefs.homeAudio) }
