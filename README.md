@@ -19,7 +19,9 @@ app, so it stays.
   typo's worth of slack ("instgram"), then loose letters in order, and the package name
   last. Accents are folded, so "pokemon" finds "Pokemon GO". Ties go to the app you
   actually open, then to the shorter name
-- Long-press an app -> dock, hide, app info, uninstall
+- **An i on every icon** -- tap it for that app's options: dock, home screen, folder,
+  rename, change icon, hide, app info, uninstall. A hold still opens the same list, and
+  the badge can be switched off in Appearance > Grid if you would rather it was not there
 - **Hidden apps** -- kept out of the grid, only surface when you type in search
 - **Wallpaper rotation** -- pick individual pictures *or a whole folder* from anywhere on
   the device, rotate on a timer, home / lock / both, optional shuffle, "Change now". A
@@ -44,11 +46,11 @@ app, so it stays.
   a Test button plays it on the spot and says why if it will not play. It mixes under
   whatever is already playing rather than pausing it, and stops the moment another app
   comes forward
-- **Drag an app out of the drawer** -- hold an icon in the drawer and keep going: the
-  drawer gets out of the way, the cell lattice comes up, and the app lands wherever you
-  let go, on any page or in the dock. The app stays in the drawer, since the drawer is
-  every app you have. Letting go without having moved opens the long-press menu instead,
-  the same as it always did
+- **Drag an app out of the drawer** -- hold an icon in the drawer for a moment and keep
+  going: the drawer gets out of the way, the cell lattice comes up, and the app lands
+  wherever you let go, on any page or in the dock. The app stays in the drawer, since the
+  drawer is every app you have. The hold is a fifth of a second rather than the system's
+  half, so picking something up is part of the same movement instead of a wait
 - **The dock is draggable both ways** -- hold a dock icon and pull it onto the home screen
   to take it out, drag it along the row to reorder it, or drag any home screen icon down
   into the dock to put it there. Unlike the drawer, dragging out of the dock takes it out:
@@ -150,8 +152,8 @@ single drag implementation move any of them.
 - Folder vs move is decided by position: the pointer must land inside `FOLDER_HIT` (0.38) of
   the target cell's half-extent to mean "make a folder". Outer region means "move here".
 - Dwelling within 6% of a page edge for 550ms flips the page mid-drag.
-- A long-press that releases without moving more than 14dp opens the item menu instead of
-  being treated as a drag.
+- A hold that releases without moving more than the touch slop opens the item menu
+  instead of being treated as a drag.
 - Hidden apps are excluded from the layout entirely and reachable only through search.
 - Widgets are dragged from edit mode only. Outside it their own views own every touch,
   which is the entire point of a widget.
@@ -344,6 +346,34 @@ picked.
   instead; dropping it on the floor would be a drag that did nothing and said nothing
   about why.
 
+### The i, and the hold that is no longer half a second
+
+Picking an icon up used to need Android's long press, half a second of holding still
+before anything happened, and the only way to the app's options was that same half second
+followed by letting go. Both are now one detector, `iconGestures` in `ui/Carry.kt`, and
+the options have a button of their own.
+
+- **Nothing is consumed until the hold is through.** Until then the finger might belong to
+  the drawer's list or the home pager, and they have the better claim on it. A finger that
+  wanders more than the touch slop inside that window is handed over by doing nothing at
+  all, which is what keeps a flick through the drawer a flick.
+- **`HOLD_MS` is 200.** Under a tenth of a second is where ordinary taps live, and half a
+  second is where it started; 200ms is short enough to feel like part of the movement and
+  long enough that a slow tap is still a tap.
+- **The release is a tap even when it arrives consumed.** Something upstream marks it, so
+  reading that flag on the way up loses every tap; the flag is read on the way down, where
+  it means what it says.
+- **One detector, not two.** A tap detector and a drag detector on the same tile both fire
+  on a hold, so the app opens and the menu opens behind it.
+- **The i is a child of the tile and takes its own touches**, which the tile sees as a
+  down that is already consumed and leaves alone.
+- **The badge never leaves the icon.** An earlier version pushed it out past the corner
+  with a negative offset, where `clip` on the tile cut it in half and swallowed its
+  touches. Whatever the badge covers, the icon loses, so it is kept small: the tile is
+  bigger than the icon, so a miss lands on the app rather than on nothing.
+- It can be turned off in Appearance > Grid, and then a hold is the way to the options
+  again, the same as it was.
+
 ### Dragging out of the drawer
 
 The drawer and the grid are two composables with a panel between them, and a drag that
@@ -362,10 +392,9 @@ grid reads it, and whoever lets go decides what happens.
 - **The drawer stays in the tree while the carry runs, at alpha 0.** Taking the row
   holding the finger out of the composition would cancel the gesture halfway across the
   screen. The widget tray already works this way for the same reason.
-- A tile that can be carried cannot also use `combinedClickable`: its long press and the
-  drag detector's would both fire, so the menu would open underneath the icon you had
-  just picked up. The long press belongs to the drag, and the menu comes from letting go
-  without having moved, which is how the home grid has always behaved.
+- A tile that can be carried has **one** detector for everything it can be asked to do
+  (`ui/Carry.kt`, `iconGestures`). Two of them race over the same finger and both win:
+  the app opens and the menu opens behind it.
 - The carry only starts once the finger has travelled `CARRY_SLOP_DP`, so a hold that
   wobbles is still a hold.
 - An empty dock has nothing to draw and so nothing to aim at. While something is in the

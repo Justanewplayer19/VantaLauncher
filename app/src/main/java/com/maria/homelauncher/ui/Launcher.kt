@@ -42,7 +42,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -138,6 +137,8 @@ fun LauncherRoot(
     var openFolder by remember { mutableStateOf<String?>(null) }
 
     var itemMenu by remember { mutableStateOf<Item?>(null) }
+    // the same sheet serves the grid and the dock; only the dock can be left
+    var fromDock by remember { mutableStateOf(false) }
     var editFor by remember { mutableStateOf<AppEntry?>(null) }
     var editingHome by remember { mutableStateOf(false) }
     var cellDp by remember { mutableStateOf(72f to 96f) }
@@ -376,7 +377,7 @@ fun LauncherRoot(
                         onLaunch = { a -> iconOf(a)?.let(repo::launch) },
                         onChange = { commit(it) },
                         onOpenFolder = { openFolder = it.id },
-                        onItemMenu = { itemMenu = it },
+                        onItemMenu = { fromDock = false; itemMenu = it },
                         onWallpaper = { settingsAt = Page.WallpaperPg; settingsOpen = true },
                         onStyle = { settingsAt = Page.ThemesPg; settingsOpen = true },
                         pages = homePages,
@@ -430,6 +431,10 @@ fun LauncherRoot(
                         onCarryStart = { app, where -> carry.begin(app, where, outOfDock = true) },
                         onCarryMove = { where -> carry.moveTo(where) },
                         onCarryEnd = { land() },
+                        onInfo = { a ->
+                            fromDock = true
+                            itemMenu = Item.App(a.packageName, a.activityName)
+                        },
                         grid = grid,
                         onLaunch = repo::launch,
                         onOpenDrawer = { setDrawerOpen(true) },
@@ -600,10 +605,15 @@ fun LauncherRoot(
                 onUninstall = { a -> iconOf(a)?.let(repo::uninstall); itemMenu = null },
                 onUngroup = { f -> commit(ungroup(layout, f.id)); itemMenu = null },
                 onCustomise = { a -> editFor = iconOf(a); itemMenu = null },
-                canRemove = !single,
+                canRemove = !single && !fromDock,
                 onRemoveFromHome = { i ->
                     commit(layout.filterNot { it.item.key == i.key }); itemMenu = null
                 },
+                onRemoveFromDock = if (fromDock) ({ a ->
+                    prefs.dock = dock.filterNot { it == a.pkg }
+                    dock = prefs.dock
+                    itemMenu = null
+                }) else null,
                 onDismiss = { itemMenu = null }
             )
         }
@@ -820,6 +830,8 @@ private fun HomeScreen(
     onCarryStart: (AppEntry, Offset) -> Unit,
     onCarryMove: (Offset) -> Unit,
     onCarryEnd: () -> Unit,
+    /** A dock app's options. */
+    onInfo: (AppEntry) -> Unit,
     grid: @Composable (Modifier) -> Unit,
     onLaunch: (AppEntry) -> Unit,
     onOpenDrawer: () -> Unit,
@@ -897,6 +909,7 @@ private fun HomeScreen(
                             app = app,
                             showLabel = false,
                             onClick = { onLaunch(app) },
+                            onLongClick = { onInfo(app) },
                             onCarryStart = { where -> onCarryStart(app, where) },
                             onCarryMove = onCarryMove,
                             onCarryEnd = onCarryEnd
@@ -1168,7 +1181,11 @@ private fun DrawerTile(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            ItemTile(item = cell.folder, iconOf = iconOf)
+            ItemTile(
+                item = cell.folder,
+                iconOf = iconOf,
+                onInfo = if (style.infoBadge) ({ onFolderMenu(cell.folder) }) else null
+            )
         }
     }
 }
@@ -1265,15 +1282,14 @@ private fun AppTile(
     app: AppEntry,
     showLabel: Boolean,
     onClick: () -> Unit,
+    /** The app's options: the i opens them, and so does a hold that goes nowhere. */
     onLongClick: (() -> Unit)? = null,
     /**
      * Set where the tile can be dragged off the surface it is on. Window coordinates.
      *
-     * A tile that can be carried cannot also use `combinedClickable`: its long press and
-     * the drag detector's would both fire, so the menu would open underneath the icon
-     * you had just picked up. The long press belongs to the drag, and the menu comes
-     * from letting go without having moved, which is how the home grid has always
-     * behaved.
+     * A tile that can be carried has one detector for everything it can be asked to do,
+     * because two of them race over the same finger and both win: the app opens and the
+     * menu opens behind it.
      */
     onCarryStart: ((Offset) -> Unit)? = null,
     onCarryMove: ((Offset) -> Unit)? = null,
@@ -1286,40 +1302,35 @@ private fun AppTile(
     val touch = if (onCarryStart == null) {
         Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
     } else {
-        Modifier
-            .pointerInput(app.packageName) {
-                detectTapGestures(onTap = { onClick() })
-            }
-            .pointerInput(app.packageName) {
-                var moved = 0f
-                var lifted = false
-                var at = Offset.Zero
-                val slop = with(density) { CARRY_SLOP_DP.dp.toPx() }
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { inTile ->
-                        moved = 0f
-                        lifted = false
-                        at = origin + inTile
-                    },
-                    onDrag = { change, delta ->
-                        change.consume()
-                        moved += abs(delta.x) + abs(delta.y)
-                        at += delta
-                        // the drawer only gets out of the way once this is clearly a
-                        // carry rather than a hold that wobbled
-                        if (!lifted && moved >= slop) {
-                            lifted = true
-                            onCarryStart(at)
-                        } else if (lifted) {
-                            onCarryMove?.invoke(at)
-                        }
-                    },
-                    onDragEnd = {
-                        if (lifted) onCarryEnd?.invoke() else onLongClick?.invoke()
-                    },
-                    onDragCancel = { if (lifted) onCarryEnd?.invoke() }
-                )
-            }
+        Modifier.pointerInput(app.packageName) {
+            var lifted = false
+            var moved = 0f
+            var at = Offset.Zero
+            val slop = with(density) { CARRY_SLOP_DP.dp.toPx() }
+            iconGestures(
+                onTap = onClick,
+                onStill = { onLongClick?.invoke() },
+                onStart = { inTile ->
+                    lifted = false
+                    moved = 0f
+                    at = origin + inTile
+                },
+                onMove = { delta ->
+                    moved += abs(delta.x) + abs(delta.y)
+                    at += delta
+                    // the drawer only gets out of the way once this is clearly a carry
+                    // rather than a hold that wobbled
+                    if (!lifted && moved >= slop) {
+                        lifted = true
+                        onCarryStart(at)
+                    } else if (lifted) {
+                        onCarryMove?.invoke(at)
+                    }
+                },
+                onEnd = { if (lifted) onCarryEnd?.invoke() else onLongClick?.invoke() },
+                onCancel = { if (lifted) onCarryEnd?.invoke() }
+            )
+        }
     }
 
     Column(
@@ -1339,6 +1350,9 @@ private fun AppTile(
             )
             if (style.badges && app.packageName in LocalBadges.current) {
                 BadgeDot(Modifier.align(Alignment.TopEnd))
+            }
+            if (style.infoBadge && onLongClick != null) {
+                InfoBadge(Modifier.align(Alignment.TopStart)) { onLongClick() }
             }
         }
         if (showLabel) {
@@ -1392,6 +1406,8 @@ private fun ItemMenuSheet(
     onCustomise: (Item.App) -> Unit,
     canRemove: Boolean,
     onRemoveFromHome: (Item) -> Unit,
+    /** Set when the sheet was opened from the dock rather than the grid. */
+    onRemoveFromDock: ((Item.App) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val style = LocalStyle.current
@@ -1413,6 +1429,7 @@ private fun ItemMenuSheet(
             when (item) {
                 is Item.App -> {
                     if (canRemove) SheetRow("Remove from home") { onRemoveFromHome(item) }
+                    onRemoveFromDock?.let { go -> SheetRow("Remove from dock") { go(item) } }
                     SheetRow(if (item.pkg in hidden) "Unhide" else "Hide app") { onHide(item) }
                     SheetRow("Rename or change icon") { onCustomise(item) }
                     SheetRow("App info") { onInfo(item) }

@@ -8,7 +8,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -551,33 +550,28 @@ fun HomeGrid(
                                         item = item,
                                         iconOf = iconOf,
                                         highlightFolder = folderOnto == p.item.key,
+                                        onInfo = if (style.infoBadge) ({
+                                            onItemMenu(p.item)
+                                        }) else null,
                                         modifier = Modifier
-                                            .pointerInput(p.item.key) {
-                                                detectTapGestures(
+                                            .pointerInput(p.item.key, live, cols, rows) {
+                                                iconGestures(
                                                     onTap = {
                                                         when (item) {
                                                             is Item.App -> onLaunch(item)
                                                             is Item.Folder -> onOpenFolder(item)
                                                             else -> Unit
                                                         }
-                                                    }
-                                                )
-                                            }
-                                            .pointerInput(p.item.key, live, cols, rows) {
-                                                var moved = 0f
-                                                val slop = with(density) { 14.dp.toPx() }
-                                                detectDragGesturesAfterLongPress(
-                                                    onDragStart = { moved = 0f; lift(it) },
-                                                    onDrag = { change, delta ->
-                                                        change.consume()
-                                                        moved += abs(delta.x) + abs(delta.y)
-                                                        carry(delta)
                                                     },
-                                                    onDragEnd = { land(moved >= slop) },
-                                                    onDragCancel = {
+                                                    onStill = { land(false) },
+                                                    onStart = { lift(it) },
+                                                    onMove = { carry(it) },
+                                                    onEnd = { land(true) },
+                                                    onCancel = {
                                                         dragKey = null
                                                         folderOnto = null
                                                         edgeDir = 0
+                                                        overDock = false
                                                     }
                                                 )
                                             }
@@ -1115,6 +1109,8 @@ fun ItemTile(
     highlightFolder: Boolean = false,
     highlightSlot: Boolean = false,
     hideLabel: Boolean = false,
+    /** Set to show the i in the corner; it is what opens this item's options. */
+    onInfo: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val style = LocalStyle.current
@@ -1150,6 +1146,10 @@ fun ItemTile(
 
             if (item is Item.App && style.badges && item.pkg in LocalBadges.current) {
                 BadgeDot(Modifier.align(Alignment.TopEnd))
+            }
+
+            if (onInfo != null && item !is Item.Widget && item !is Item.Clock) {
+                InfoBadge(Modifier.align(Alignment.TopStart), onInfo)
             }
         }
 

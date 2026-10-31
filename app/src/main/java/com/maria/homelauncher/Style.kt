@@ -73,6 +73,8 @@ data class Style(
     val folderAlpha: Float = 0.16f,
     val folderRadius: Int = 26,
     val badges: Boolean = true,
+    /** The little i in the corner of each icon that opens its options. */
+    val infoBadge: Boolean = true,
 
     val accent: Long = 0xFFBFC9FF,
     val autoAccent: Boolean = false,
@@ -142,6 +144,7 @@ class StyleStore(ctx: Context) {
         folderAlpha = sp.getFloat("folderAlpha", 0.16f),
         folderRadius = sp.getInt("folderRadius", 26),
         badges = sp.getBoolean("badges", true),
+        infoBadge = sp.getBoolean("infoBadge", true),
 
         accent = sp.getLong("accent", 0xFFBFC9FF),
         autoAccent = sp.getBoolean("autoAccent", false),
@@ -184,6 +187,7 @@ class StyleStore(ctx: Context) {
             .putFloat("folderAlpha", s.folderAlpha)
             .putInt("folderRadius", s.folderRadius)
             .putBoolean("badges", s.badges)
+            .putBoolean("infoBadge", s.infoBadge)
             .putLong("accent", s.accent)
             .putBoolean("autoAccent", s.autoAccent)
             .putLong("bgColor", s.bgColor)

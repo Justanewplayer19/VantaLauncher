@@ -67,6 +67,9 @@ fun GridSection(style: Style, onStyle: (Style) -> Unit) {
     Spacer(Modifier.height(8.dp))
     ToggleRow("Show page dots", style.showPageDots) { onStyle(style.copy(showPageDots = it)) }
 
+    ToggleRow("Info button on icons", style.infoBadge) { onStyle(style.copy(infoBadge = it)) }
+    Hint("A small i in the corner of every app. Tap it for that app's options: rename it, change its icon, hide it, uninstall it. With it off, a short hold on the icon brings up the same list.")
+
     Spacer(Modifier.height(18.dp))
     Label("Folders")
     SliderRow("Tile shade", style.folderAlpha, 0f, 0.45f, decimals = true) {
